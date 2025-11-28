@@ -13,6 +13,9 @@ import (
 	"destill-agent/src/contracts"
 )
 
+// DefaultConfidenceScore is the default confidence score for placeholder analysis.
+const DefaultConfidenceScore = 0.75
+
 // AnalysisAgent subscribes to raw logs and performs analysis.
 type AnalysisAgent struct {
 	msgBroker contracts.MessageBroker
@@ -125,8 +128,8 @@ func (a *AnalysisAgent) detectSeverity(content string) string {
 // calculateConfidenceScore determines the confidence of the analysis.
 // Placeholder implementation - returns a fixed score for now.
 func (a *AnalysisAgent) calculateConfidenceScore(content string) float64 {
-	// Placeholder: return 0.75 as a default confidence
-	return 0.75
+	// Placeholder: return default confidence score
+	return DefaultConfidenceScore
 }
 
 func main() {
