@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"destill-agent/src/broker"
@@ -15,6 +17,7 @@ import (
 	"destill-agent/src/cmd/ingestion"
 	"destill-agent/src/config"
 	"destill-agent/src/contracts"
+	"destill-agent/src/tui"
 )
 
 var (
@@ -70,15 +73,84 @@ the ranked failure cards in an interactive terminal interface.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Destill Analysis Mode")
 		fmt.Println("=====================")
-		fmt.Println("Stream pipeline is running...")
-		fmt.Println("TUI application will be implemented here.")
-		fmt.Println("")
-		fmt.Println("Press Ctrl+C to exit.")
+		fmt.Println("Collecting triage cards...")
+		fmt.Println()
 
-		// Keep the application running
-		// In the future, this will launch the Bubble Tea TUI
-		select {}
+		// Collect triage cards from the ci_failures_ranked topic
+		cards := collectTriageCards(5 * time.Second)
+
+		if len(cards) == 0 {
+			fmt.Println("No failure cards collected.")
+			fmt.Println("Submit a build using: destill build <build-url>")
+			return
+		}
+
+		// Sort cards by confidence score (descending), then by recurrence count
+		sort.Slice(cards, func(i, j int) bool {
+			if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
+				return cards[i].ConfidenceScore > cards[j].ConfidenceScore
+			}
+			// Extract recurrence count from metadata for sorting
+			countI := getRecurrenceCount(cards[i])
+			countJ := getRecurrenceCount(cards[j])
+			return countI > countJ
+		})
+
+		// Launch the TUI
+		model := tui.NewTriageModel(cards)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			os.Exit(1)
+		}
 	},
+}
+
+// collectTriageCards subscribes to ci_failures_ranked and collects cards for a duration
+func collectTriageCards(duration time.Duration) []contracts.TriageCard {
+	var cards []contracts.TriageCard
+
+	// Subscribe to the ranked failures topic
+	rankChan, err := msgBroker.Subscribe("ci_failures_ranked")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error subscribing to ci_failures_ranked: %v\n", err)
+		return cards
+	}
+
+	// Collect cards for the specified duration
+	timeout := time.After(duration)
+
+collectLoop:
+	for {
+		select {
+		case msg := <-rankChan:
+			var card contracts.TriageCard
+			if err := json.Unmarshal(msg, &card); err != nil {
+				fmt.Fprintf(os.Stderr, "Error unmarshaling triage card: %v\n", err)
+				continue
+			}
+			cards = append(cards, card)
+
+		case <-timeout:
+			break collectLoop
+		}
+	}
+
+	return cards
+}
+
+// getRecurrenceCount extracts the recurrence count from metadata
+func getRecurrenceCount(card contracts.TriageCard) int {
+	if card.Metadata == nil {
+		return 1
+	}
+	if count, ok := card.Metadata["recurrence_count"]; ok {
+		var c int
+		fmt.Sscanf(count, "%d", &c)
+		return c
+	}
+	return 1
 }
 
 // buildCmd represents the build command
