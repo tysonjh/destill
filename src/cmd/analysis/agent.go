@@ -77,7 +77,7 @@ func (a *Agent) processLogChunk(message []byte) {
 	}
 
 	triageCard := contracts.TriageCard{
-		ID:              fmt.Sprintf("triage-%d", time.Now().UnixNano()),
+		ID:              logChunk.ID,
 		Source:          "buildkite",
 		Timestamp:       time.Now().Format(time.RFC3339),
 		Severity:        severity,
