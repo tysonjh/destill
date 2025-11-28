@@ -6,7 +6,7 @@ Destill is a distributed intelligence system designed to minimize Mean Time To R
 
 ## 1. Core Data Flow 
 
-All data within Destill flows through two main subjects (queues) managed by the Message Broker:
+All data within Destill flows through three main subjects (queues) managed by the Message Broker:
 
 * **`ci_requests_raw` (Producer: CLI/User):** Receives requests (e.g., a Buildkite URL) for a build to analyze.
 * **`ci_logs_raw` (Producer: Ingestion Agent):** Receives raw log chunks and build metadata ready for analysis.
