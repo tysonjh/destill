@@ -5,5 +5,4 @@ go_library(
     srcs = ["inmemory.go"],
     importpath = "destill-agent/src/broker",
     visibility = ["//visibility:public"],
-    deps = ["//src/contracts"],
 )

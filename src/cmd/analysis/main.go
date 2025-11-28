@@ -1,16 +1,19 @@
 // Package main provides the Analysis Agent for the Destill log triage tool.
-// This agent subscribes to TriageCards and performs log analysis.
+// This agent is the intelligence engine that processes raw logs and produces TriageCards.
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
-	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 )
 
-// AnalysisAgent subscribes to TriageCards and performs analysis.
+// AnalysisAgent subscribes to raw logs and performs analysis.
 type AnalysisAgent struct {
 	msgBroker contracts.MessageBroker
 }
@@ -20,57 +23,114 @@ func NewAnalysisAgent(msgBroker contracts.MessageBroker) *AnalysisAgent {
 	return &AnalysisAgent{msgBroker: msgBroker}
 }
 
-// Start begins listening for TriageCards on the specified topic.
-func (a *AnalysisAgent) Start(topic string) error {
-	return a.msgBroker.Subscribe(topic, a.analyze)
-}
+// Run starts the analysis agent's main loop.
+// It subscribes to the ci_logs_raw topic and processes incoming log chunks.
+func (a *AnalysisAgent) Run() error {
+	logChannel, err := a.msgBroker.Subscribe("ci_logs_raw")
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to ci_logs_raw: %w", err)
+	}
 
-// analyze processes a TriageCard and performs analysis.
-func (a *AnalysisAgent) analyze(card contracts.TriageCard) error {
-	fmt.Printf("[Analysis] Processing card %s from %s\n", card.ID, card.Source)
+	fmt.Println("[AnalysisAgent] Listening for logs on 'ci_logs_raw' topic...")
 
-	// Simple analysis: categorize by severity
-	switch strings.ToUpper(card.Severity) {
-	case "ERROR":
-		fmt.Printf("  [ALERT] Error detected: %s\n", card.Message)
-	case "WARN":
-		fmt.Printf("  [WARNING] Potential issue: %s\n", card.Message)
-	case "INFO":
-		fmt.Printf("  [INFO] Normal log: %s\n", card.Message)
-	default:
-		fmt.Printf("  [UNKNOWN] Unrecognized severity: %s\n", card.Severity)
+	for message := range logChannel {
+		// Launch processing in a Go routine for concurrency
+		go a.processLogChunk(message)
 	}
 
 	return nil
 }
 
-func main() {
-	fmt.Println("Destill Analysis Agent starting...")
-
-	// Create broker using the shared implementation
-	var msgBroker contracts.MessageBroker = broker.NewInMemoryBroker()
-	defer msgBroker.Close()
-
-	agent := NewAnalysisAgent(msgBroker)
-
-	// Subscribe to triage topic
-	if err := agent.Start("triage"); err != nil {
-		fmt.Printf("Error starting analysis agent: %v\n", err)
+// processLogChunk handles an incoming raw log chunk.
+// This is where the full analysis pipeline will be implemented.
+func (a *AnalysisAgent) processLogChunk(message []byte) {
+	// Deserialize the raw message into a LogChunk
+	var logChunk contracts.LogChunk
+	if err := json.Unmarshal(message, &logChunk); err != nil {
+		fmt.Printf("[AnalysisAgent] Error unmarshaling log chunk: %v\n", err)
 		return
 	}
 
-	// Simulate receiving some cards for demonstration
-	testCards := []contracts.TriageCard{
-		{ID: "test-001", Source: "syslog", Severity: "INFO", Message: "System boot complete"},
-		{ID: "test-002", Source: "app", Severity: "ERROR", Message: "Database connection failed"},
-		{ID: "test-003", Source: "app", Severity: "WARN", Message: "Response time above threshold"},
+	fmt.Printf("[AnalysisAgent] Processing log chunk %s for job %s\n", logChunk.ID, logChunk.JobName)
+
+	// Placeholder: Log normalization
+	normalizedMessage := a.normalizeLog(logChunk.Content)
+
+	// Placeholder: Calculate message hash for recurrence tracking
+	messageHash := a.calculateMessageHash(normalizedMessage)
+
+	// Placeholder: Determine severity from log content
+	severity := a.detectSeverity(logChunk.Content)
+
+	// Placeholder: Calculate confidence score
+	confidenceScore := a.calculateConfidenceScore(logChunk.Content)
+
+	// Create the TriageCard
+	triageCard := contracts.TriageCard{
+		ID:              fmt.Sprintf("triage-%d", time.Now().UnixNano()),
+		Source:          "buildkite",
+		Timestamp:       time.Now().Format(time.RFC3339),
+		Severity:        severity,
+		Message:         normalizedMessage,
+		Metadata:        make(map[string]string),
+		RequestID:       logChunk.RequestID,
+		MessageHash:     messageHash,
+		JobName:         logChunk.JobName,
+		ConfidenceScore: confidenceScore,
 	}
 
-	for _, card := range testCards {
-		if err := msgBroker.Publish("triage", card); err != nil {
-			fmt.Printf("Error publishing test card: %v\n", err)
-		}
+	// Marshal and publish to ci_failures_ranked topic
+	data, err := json.Marshal(triageCard)
+	if err != nil {
+		fmt.Printf("[AnalysisAgent] Error marshaling triage card: %v\n", err)
+		return
 	}
 
-	fmt.Println("Analysis Agent completed.")
+	if err := a.msgBroker.Publish("ci_failures_ranked", data); err != nil {
+		fmt.Printf("[AnalysisAgent] Error publishing triage card: %v\n", err)
+		return
+	}
+
+	fmt.Printf("[AnalysisAgent] Published triage card to 'ci_failures_ranked' (hash: %s)\n", messageHash[:8])
+}
+
+// normalizeLog performs log normalization.
+// Placeholder implementation - will be enhanced with actual normalization logic.
+func (a *AnalysisAgent) normalizeLog(content string) string {
+	// Basic normalization: trim whitespace and convert to lowercase for comparison
+	normalized := strings.TrimSpace(content)
+	return normalized
+}
+
+// calculateMessageHash generates a unique hash of the normalized failure message.
+// Used for recurrence tracking across builds.
+func (a *AnalysisAgent) calculateMessageHash(normalizedMessage string) string {
+	hash := sha256.Sum256([]byte(normalizedMessage))
+	return hex.EncodeToString(hash[:])
+}
+
+// detectSeverity analyzes log content to determine severity level.
+// Placeholder implementation - will be enhanced with ML/pattern matching.
+func (a *AnalysisAgent) detectSeverity(content string) string {
+	lowerContent := strings.ToLower(content)
+	if strings.Contains(lowerContent, "error") || strings.Contains(lowerContent, "fatal") {
+		return "ERROR"
+	}
+	if strings.Contains(lowerContent, "warn") {
+		return "WARN"
+	}
+	return "INFO"
+}
+
+// calculateConfidenceScore determines the confidence of the analysis.
+// Placeholder implementation - returns a fixed score for now.
+func (a *AnalysisAgent) calculateConfidenceScore(content string) float64 {
+	// Placeholder: return 0.75 as a default confidence
+	return 0.75
+}
+
+func main() {
+	fmt.Println("Destill Analysis Agent")
+	fmt.Println("This agent should be started by the CLI orchestrator.")
+	fmt.Println("Run 'destill analyze' to start the full pipeline.")
 }

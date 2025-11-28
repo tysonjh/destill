@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//src/broker",
         "//src/contracts",
+        "@com_github_spf13_cobra//:cobra",
     ],
 )
 
