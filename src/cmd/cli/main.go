@@ -66,22 +66,35 @@ It uses a stream processing architecture with:
 // analyzeCmd represents the analyze command
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze",
-	Short: "Launch the analysis TUI",
-	Long: `Launches the Bubble Tea TUI application for interactive log analysis.
-This command starts the full stream processing pipeline and presents
-the ranked failure cards in an interactive terminal interface.`,
+	Short: "Launch the TUI to view triage cards",
+	Long: `Waits for triage cards to appear on the ci_failures_ranked topic and displays them
+in an interactive TUI.
+
+This command is useful when:
+- Using a persistent message broker (Redis, Kafka, etc.) where data survives between processes
+- Running alongside other processes that are producing triage cards
+- Viewing results from previously submitted builds
+
+For in-memory broker: Use 'destill build <url> --wait' instead, which runs the
+complete pipeline in a single process.
+
+Example:
+  destill analyze`,
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Println("Destill Analysis Mode")
 		fmt.Println("=====================")
-		fmt.Println("Collecting triage cards...")
+		fmt.Println("Waiting for triage cards (5 seconds)...")
 		fmt.Println()
 
 		// Collect triage cards from the ci_failures_ranked topic
 		cards := collectTriageCards(5 * time.Second)
 
 		if len(cards) == 0 {
-			fmt.Println("No failure cards collected.")
-			fmt.Println("Submit a build using: destill build <build-url>")
+			fmt.Println("⚠️  No failure cards collected.")
+			fmt.Println()
+			fmt.Println("💡 Tips:")
+			fmt.Println("   • With in-memory broker: Use 'destill build <url> --wait'")
+			fmt.Println("   • With persistent broker: Ensure builds have been submitted via 'destill build <url>'")
 			return
 		}
 
@@ -159,10 +172,20 @@ var buildCmd = &cobra.Command{
 	Short: "Submits an entire Buildkite build run for analysis.",
 	Long: `Submits a Buildkite URL (e.g., https://buildkite.com/org/pipeline/builds/4091) 
 to the destill_requests topic. The Ingestion Agent will then discover all job 
-logs associated with that build and process them.`,
+logs associated with that build and process them.
+
+With --wait flag: Keeps the process running, collects results, and launches the TUI.
+This is useful with the in-memory broker for immediate feedback.
+
+Without --wait: Publishes the request and exits immediately. Requires a persistent
+message broker (Redis, Kafka, etc.) to retain data between process invocations.
+
+Example:
+  destill build https://buildkite.com/org/pipeline/builds/4091 --wait`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		buildURL := args[0]
+		waitForResults, _ := cmd.Flags().GetBool("wait")
 
 		// Create the request payload
 		request := struct {
@@ -186,9 +209,58 @@ logs associated with that build and process them.`,
 			os.Exit(1)
 		}
 
-		fmt.Printf("Submitted build request %s\n", request.RequestID)
+		if !waitForResults {
+			// Fire-and-forget mode (production with persistent broker)
+			fmt.Printf("✅ Submitted build request %s\n", request.RequestID)
+			fmt.Printf("   Build URL: %s\n", buildURL)
+			fmt.Println()
+			fmt.Println("The pipeline will discover and process all job logs from this build.")
+			fmt.Println()
+			fmt.Println("💡 Tip: Use --wait flag to wait for results and launch the TUI.")
+			fmt.Println("   (Required when using in-memory broker)")
+			return
+		}
+
+		// Interactive mode (wait for results and show TUI)
+		fmt.Println("Destill - CI/CD Failure Triage")
+		fmt.Println("===============================")
 		fmt.Printf("Build URL: %s\n", buildURL)
-		fmt.Println("The pipeline will discover and process all job logs from this build.")
+		fmt.Println()
+		fmt.Println("📥 Fetching build metadata and job logs...")
+		fmt.Println("🔍 Analyzing logs for failures...")
+		fmt.Println("⏳ Waiting for pipeline to complete (10 seconds)...")
+		fmt.Println()
+
+		// Collect triage cards from the pipeline
+		cards := collectTriageCards(10 * time.Second)
+
+		if len(cards) == 0 {
+			fmt.Println("✅ No failures detected in this build!")
+			fmt.Println()
+			return
+		}
+
+		fmt.Printf("📊 Found %d failure(s). Launching TUI...\n", len(cards))
+		fmt.Println()
+
+		// Sort cards by confidence score (descending), then by recurrence count
+		sort.Slice(cards, func(i, j int) bool {
+			if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
+				return cards[i].ConfidenceScore > cards[j].ConfidenceScore
+			}
+			countI := getRecurrenceCount(cards[i])
+			countJ := getRecurrenceCount(cards[j])
+			return countI > countJ
+		})
+
+		// Launch the TUI
+		model := tui.NewTriageModel(cards)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+			os.Exit(1)
+		}
 	},
 }
 
@@ -217,6 +289,9 @@ func startStreamPipeline() {
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(buildCmd)
+
+	// Add --wait flag to build command
+	buildCmd.Flags().BoolP("wait", "w", false, "Wait for pipeline to complete and launch TUI (required for in-memory broker)")
 }
 
 func main() {

@@ -32,22 +32,39 @@ export BUILDKITE_API_TOKEN="your-token-here"
 
 ## Usage
 
-### Analyze a Build
+### Analyze a Build (Interactive Mode)
 
-Submit a Buildkite build URL for analysis:
+Submit a Buildkite build URL and view results interactively:
+
+```bash
+./destill build https://buildkite.com/org/pipeline/builds/4091 --wait
+```
+
+The `--wait` flag keeps the process running and launches the TUI when analysis completes. This is required when using the in-memory broker (default).
+
+The system will:
+1. Fetch build metadata and job logs from Buildkite
+2. Analyze logs to detect failures and calculate confidence scores  
+3. Display ranked failure cards in an interactive TUI
+
+**Navigation:**
+- `↑`/`k`: Move up
+- `↓`/`j`: Move down
+- `q`/`ctrl+c`: Exit
+
+### Fire-and-Forget Mode
+
+Submit a build without waiting (requires persistent broker):
 
 ```bash
 ./destill build https://buildkite.com/org/pipeline/builds/4091
 ```
 
-The system will:
-1. Fetch build metadata and job logs from Buildkite
-2. Analyze logs to detect failures and calculate confidence scores
-3. Output ranked failure cards sorted by priority
+This publishes the request and exits immediately. Useful when using a persistent message broker (Redis, Kafka, etc.) in production.
 
-### Interactive Mode
+### View Results Later
 
-Launch the interactive TUI for real-time log analysis:
+Launch the TUI to view triage cards (requires persistent broker):
 
 ```bash
 ./destill analyze
