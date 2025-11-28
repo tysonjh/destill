@@ -49,7 +49,14 @@ It uses a stream processing architecture with:
 
 		// Initialize the broker before any command runs
 		inMemoryBroker := broker.NewInMemoryBroker()
-		inMemoryBroker.SetVerbose(true)
+
+		// Only enable verbose logging if NOT using --wait mode
+		// (--wait mode will launch TUI, so we don't want logs interfering)
+		waitFlag := cmd.Flags().Lookup("wait")
+		if waitFlag == nil || waitFlag.Value.String() != "true" {
+			inMemoryBroker.SetVerbose(true)
+		}
+
 		msgBroker = inMemoryBroker
 
 		// Start the stream pipeline (agents run as persistent goroutines)
@@ -252,6 +259,9 @@ Example:
 			countJ := getRecurrenceCount(cards[j])
 			return countI > countJ
 		})
+
+		// Brief pause to ensure any remaining log output completes before TUI starts
+		time.Sleep(500 * time.Millisecond)
 
 		// Launch the TUI
 		model := tui.NewTriageModel(cards)

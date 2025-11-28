@@ -62,7 +62,7 @@ var (
 	addressInUsePattern         = regexp.MustCompile(`(?i)address\s+already\s+in\s+use`)
 
 	// Success/informational messages that shouldn't be flagged as errors
-	testPassedPattern       = regexp.MustCompile(`(?i)(tests?\s+passed|all\s+tests?\s+(passed|succeeded)|build\s+succeeded|successfully\s+completed)`)
+	testPassedPattern         = regexp.MustCompile(`(?i)(tests?\s+passed|all\s+tests?\s+(passed|succeeded)|build\s+succeeded|successfully\s+completed)`)
 	deprecationWarningPattern = regexp.MustCompile(`(?i)(deprecated|deprecation\s+warning)`)
 )
 
@@ -95,7 +95,8 @@ func (a *Agent) Run() error {
 }
 
 // processLogChunk handles an incoming raw log chunk.
-// This is where the full analysis pipeline will be implemented.
+// Each LogChunk contains the full log output from one CI job.
+// We split it into individual lines and analyze each line for failures.
 func (a *Agent) processLogChunk(message []byte) {
 	// Deserialize the raw message into a LogChunk
 	var logChunk contracts.LogChunk
@@ -106,52 +107,89 @@ func (a *Agent) processLogChunk(message []byte) {
 
 	fmt.Printf("[AnalysisAgent] Processing log chunk %s for job %s\n", logChunk.ID, logChunk.JobName)
 
-	// Placeholder: Log normalization
-	normalizedMessage := a.normalizeLog(logChunk.Content)
+	// Split the log content into individual lines
+	lines := strings.Split(logChunk.Content, "\n")
 
-	// Placeholder: Calculate message hash for recurrence tracking
-	messageHash := a.calculateMessageHash(normalizedMessage)
+	fmt.Printf("[AnalysisAgent] Analyzing %d log lines from job %s\n", len(lines), logChunk.JobName)
 
-	// Placeholder: Determine severity from log content
-	severity := a.detectSeverity(logChunk.Content)
+	// Process each line independently
+	for lineNum, line := range lines {
+		// Skip empty or trivially short lines
+		trimmedLine := strings.TrimSpace(line)
+		if len(trimmedLine) < 10 {
+			continue
+		}
 
-	// Placeholder: Calculate confidence score
-	confidenceScore := a.calculateConfidenceScore(logChunk.Content)
+		// Determine severity from log content FIRST
+		severity := a.detectSeverity(trimmedLine)
 
-	// Create the TriageCard
-	// Metadata will be populated with analysis-specific information (e.g., matched patterns, ML scores)
-	metadata := make(map[string]string)
-	// Copy any relevant metadata from the source LogChunk
-	for k, v := range logChunk.Metadata {
-		metadata[k] = v
+		// FILTER: Only process ERROR and FATAL severity logs
+		// Skip INFO, WARN, and DEBUG messages
+		if severity != "ERROR" && severity != "FATAL" {
+			continue
+		}
+
+		// Normalize the log line
+		normalizedMessage := a.normalizeLog(trimmedLine)
+
+		// Skip hook execution messages and other build system noise
+		if strings.Contains(normalizedMessage, "running agent environment hook") ||
+			strings.Contains(normalizedMessage, "running global environment hook") ||
+			strings.Contains(normalizedMessage, "running pre-command hook") ||
+			strings.Contains(normalizedMessage, "running post-command hook") {
+			continue
+		}
+
+		// Calculate message hash for recurrence tracking
+		messageHash := a.calculateMessageHash(normalizedMessage)
+
+		// Calculate confidence score
+		confidenceScore := a.calculateConfidenceScore(trimmedLine)
+
+		// FILTER: Only create triage cards for high-confidence failures
+		// Minimum threshold of 0.80 to reduce noise significantly
+		if confidenceScore < 0.80 {
+			continue
+		}
+
+		// Create the TriageCard
+		// Metadata will be populated with analysis-specific information
+		metadata := make(map[string]string)
+		// Copy any relevant metadata from the source LogChunk
+		for k, v := range logChunk.Metadata {
+			metadata[k] = v
+		}
+		// Add line-specific metadata
+		metadata["line_number"] = fmt.Sprintf("%d", lineNum+1)
+
+		triageCard := contracts.TriageCard{
+			ID:              fmt.Sprintf("%s-line-%d", logChunk.ID, lineNum+1),
+			Source:          "buildkite",
+			Timestamp:       time.Now().Format(time.RFC3339),
+			Severity:        severity,
+			Message:         normalizedMessage,
+			Metadata:        metadata,
+			RequestID:       logChunk.RequestID,
+			MessageHash:     messageHash,
+			JobName:         logChunk.JobName,
+			ConfidenceScore: confidenceScore,
+		}
+
+		// Marshal and publish to ci_failures_ranked topic
+		data, err := json.Marshal(triageCard)
+		if err != nil {
+			fmt.Printf("[AnalysisAgent] Error marshaling triage card: %v\n", err)
+			continue
+		}
+
+		if err := a.msgBroker.Publish("ci_failures_ranked", data); err != nil {
+			fmt.Printf("[AnalysisAgent] Error publishing triage card: %v\n", err)
+			continue
+		}
+
+		fmt.Printf("[AnalysisAgent] Published triage card for line %d (severity: %s, confidence: %.2f)\n",
+			lineNum+1, severity, confidenceScore)
 	}
-
-	triageCard := contracts.TriageCard{
-		ID:              logChunk.ID,
-		Source:          "buildkite",
-		Timestamp:       time.Now().Format(time.RFC3339),
-		Severity:        severity,
-		Message:         normalizedMessage,
-		Metadata:        metadata,
-		RequestID:       logChunk.RequestID,
-		MessageHash:     messageHash,
-		JobName:         logChunk.JobName,
-		ConfidenceScore: confidenceScore,
-	}
-
-	// Marshal and publish to ci_failures_ranked topic
-	data, err := json.Marshal(triageCard)
-	if err != nil {
-		fmt.Printf("[AnalysisAgent] Error marshaling triage card: %v\n", err)
-		return
-	}
-
-	if err := a.msgBroker.Publish("ci_failures_ranked", data); err != nil {
-		fmt.Printf("[AnalysisAgent] Error publishing triage card: %v\n", err)
-		return
-	}
-
-	fmt.Printf("[AnalysisAgent] Published triage card to 'ci_failures_ranked' (hash: %s)\n", messageHash[:8])
 }
 
 // normalizeLog performs comprehensive log normalization for recurrence tracking.
