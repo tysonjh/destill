@@ -1,0 +1,7 @@
+# Bazel directories
+/bazel-*
+
+# Go build artifacts
+*.exe
+*.test
+*.out

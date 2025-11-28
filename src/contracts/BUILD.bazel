@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "contracts",
+    srcs = ["broker.go"],
+    importpath = "destill-agent/src/contracts",
+    visibility = ["//visibility:public"],
+)

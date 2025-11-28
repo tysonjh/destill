@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ingestion",
+    srcs = ["agent.go"],
+    importpath = "destill-agent/src/cmd/ingestion",
+    visibility = ["//visibility:public"],
+    deps = ["//src/contracts"],
+)
+
+go_test(
+    name = "ingestion_test",
+    srcs = ["agent_test.go"],
+    embed = [":ingestion"],
+    deps = [
+        "//src/broker",
+        "//src/contracts",
+    ],
+)
