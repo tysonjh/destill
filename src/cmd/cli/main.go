@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"destill-agent/src/broker"
+	"destill-agent/src/cmd/analysis"
+	"destill-agent/src/cmd/ingestion"
 	"destill-agent/src/contracts"
 )
 
@@ -67,124 +69,73 @@ the ranked failure cards in an interactive terminal interface.`,
 	},
 }
 
-// IngestionAgent consumes requests and publishes raw log data via a MessageBroker.
-type IngestionAgent struct {
-	msgBroker contracts.MessageBroker
-}
+// submitCmd represents the submit command
+var submitCmd = &cobra.Command{
+	Use:   "submit [log-url] [job-name]",
+	Short: "Submits a raw log URL to the pipeline for analysis.",
+	Long: `Submits a raw log URL to the destill_requests topic to kick off the
+streaming pipeline. The Ingestion Agent will pick up the request,
+fetch the log content, and publish it for analysis.`,
+	Args: cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		logURL := args[0]
+		jobName := args[1]
 
-// NewIngestionAgent creates a new IngestionAgent with the given broker.
-func NewIngestionAgent(msgBroker contracts.MessageBroker) *IngestionAgent {
-	return &IngestionAgent{msgBroker: msgBroker}
-}
-
-// Run starts the ingestion agent's main loop.
-// This is a blocking call that runs until the channel is closed.
-func (a *IngestionAgent) Run() {
-	requestChannel, err := a.msgBroker.Subscribe("destill_requests")
-	if err != nil {
-		fmt.Printf("[IngestionAgent] Error subscribing: %v\n", err)
-		return
-	}
-
-	fmt.Println("[IngestionAgent] Started - listening on 'destill_requests'")
-
-	for message := range requestChannel {
-		if err := a.processRequest(message); err != nil {
-			fmt.Printf("[IngestionAgent] Error processing request: %v\n", err)
+		// Create the request payload
+		request := struct {
+			RequestID string `json:"request_id"`
+			JobName   string `json:"job_name"`
+			LogURL    string `json:"log_url"`
+		}{
+			RequestID: fmt.Sprintf("req-%d", time.Now().UnixNano()),
+			JobName:   jobName,
+			LogURL:    logURL,
 		}
-	}
-}
 
-// processRequest handles an incoming request and creates a LogChunk.
-func (a *IngestionAgent) processRequest(message []byte) error {
-	// Parse the incoming request
-	var request struct {
-		RequestID string `json:"request_id"`
-		JobName   string `json:"job_name"`
-		LogURL    string `json:"log_url"`
-	}
+		// Marshal the request
+		data, err := json.Marshal(request)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling request: %v\n", err)
+			os.Exit(1)
+		}
 
-	if err := json.Unmarshal(message, &request); err != nil {
-		return fmt.Errorf("failed to unmarshal request: %w", err)
-	}
+		// Publish to destill_requests topic
+		if err := msgBroker.Publish("destill_requests", data); err != nil {
+			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
+			os.Exit(1)
+		}
 
-	fmt.Printf("[IngestionAgent] Processing request %s for job %s\n", request.RequestID, request.JobName)
-
-	// Create a LogChunk from the request
-	logChunk := contracts.LogChunk{
-		ID:        fmt.Sprintf("chunk-%d", time.Now().UnixNano()),
-		RequestID: request.RequestID,
-		JobName:   request.JobName,
-		Content:   fmt.Sprintf("Placeholder log content for %s", request.LogURL),
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-
-	// Marshal and publish to ci_logs_raw
-	data, err := json.Marshal(logChunk)
-	if err != nil {
-		return fmt.Errorf("failed to marshal log chunk: %w", err)
-	}
-
-	if err := a.msgBroker.Publish("ci_logs_raw", data); err != nil {
-		return fmt.Errorf("failed to publish to ci_logs_raw: %w", err)
-	}
-
-	fmt.Printf("[IngestionAgent] Published log chunk to 'ci_logs_raw'\n")
-	return nil
-}
-
-// AnalysisAgent subscribes to raw logs and performs analysis.
-type AnalysisAgent struct {
-	msgBroker contracts.MessageBroker
-}
-
-// NewAnalysisAgent creates a new AnalysisAgent with the given broker.
-func NewAnalysisAgent(msgBroker contracts.MessageBroker) *AnalysisAgent {
-	return &AnalysisAgent{msgBroker: msgBroker}
-}
-
-// Run starts the analysis agent's main loop.
-// This is a blocking call that runs until the channel is closed.
-func (a *AnalysisAgent) Run() {
-	logChannel, err := a.msgBroker.Subscribe("ci_logs_raw")
-	if err != nil {
-		fmt.Printf("[AnalysisAgent] Error subscribing: %v\n", err)
-		return
-	}
-
-	fmt.Println("[AnalysisAgent] Started - listening on 'ci_logs_raw'")
-
-	for message := range logChannel {
-		go a.processLogChunk(message)
-	}
-}
-
-// processLogChunk handles an incoming raw log chunk.
-func (a *AnalysisAgent) processLogChunk(message []byte) {
-	fmt.Printf("[AnalysisAgent] Processing log chunk: %d bytes\n", len(message))
-	// Placeholder: Full analysis pipeline will be implemented here
-	// 1. Deserialize message
-	// 2. Normalize log
-	// 3. Calculate message hash
-	// 4. Publish to ci_failures_ranked
+		fmt.Printf("Submitted request %s for job '%s'\n", request.RequestID, jobName)
+		fmt.Printf("Log URL: %s\n", logURL)
+		fmt.Println("The pipeline will process this request asynchronously.")
+	},
 }
 
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
 // The agents run indefinitely until the broker is closed.
 func startStreamPipeline() {
 	// Start Ingestion Agent as a persistent goroutine
-	ingestionAgent := NewIngestionAgent(msgBroker)
-	go ingestionAgent.Run()
+	ingestionAgent := ingestion.NewAgent(msgBroker)
+	go func() {
+		if err := ingestionAgent.Run(); err != nil {
+			fmt.Printf("[Pipeline] Ingestion agent error: %v\n", err)
+		}
+	}()
 
 	// Start Analysis Agent as a persistent goroutine
-	analysisAgent := NewAnalysisAgent(msgBroker)
-	go analysisAgent.Run()
+	analysisAgent := analysis.NewAgent(msgBroker)
+	go func() {
+		if err := analysisAgent.Run(); err != nil {
+			fmt.Printf("[Pipeline] Analysis agent error: %v\n", err)
+		}
+	}()
 
 	fmt.Println("[Pipeline] Stream processing pipeline started")
 }
 
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
+	rootCmd.AddCommand(submitCmd)
 }
 
 func main() {

@@ -37,6 +37,8 @@ type LogChunk struct {
 	Content string `json:"content"`
 	// Time when the log chunk was created.
 	Timestamp string `json:"timestamp"`
+	// Optional map for any initial metadata captured by the Ingestion Agent.
+	Metadata map[string]string `json:"metadata"`
 }
 
 // MessageBroker defines the interface for communication between agents.

@@ -1,15 +1,9 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "ingestion_lib",
-    srcs = ["main.go"],
-    importpath = "destill-agent/src/cmd/ingestion",
-    visibility = ["//visibility:private"],
-    deps = ["//src/contracts"],
-)
-
-go_binary(
     name = "ingestion",
-    embed = [":ingestion_lib"],
+    srcs = ["agent.go"],
+    importpath = "destill-agent/src/cmd/ingestion",
     visibility = ["//visibility:public"],
+    deps = ["//src/contracts"],
 )

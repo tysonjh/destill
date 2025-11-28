@@ -1,6 +1,6 @@
-// Package main provides the Ingestion Agent for the Destill log triage tool.
+// Package ingestion provides the Ingestion Agent for the Destill log triage tool.
 // This agent consumes requests from a topic and publishes raw log data.
-package main
+package ingestion
 
 import (
 	"encoding/json"
@@ -10,19 +10,19 @@ import (
 	"destill-agent/src/contracts"
 )
 
-// IngestionAgent consumes requests and publishes raw log data via a MessageBroker.
-type IngestionAgent struct {
+// Agent consumes requests and publishes raw log data via a MessageBroker.
+type Agent struct {
 	msgBroker contracts.MessageBroker
 }
 
-// NewIngestionAgent creates a new IngestionAgent with the given broker.
-func NewIngestionAgent(msgBroker contracts.MessageBroker) *IngestionAgent {
-	return &IngestionAgent{msgBroker: msgBroker}
+// NewAgent creates a new IngestionAgent with the given broker.
+func NewAgent(msgBroker contracts.MessageBroker) *Agent {
+	return &Agent{msgBroker: msgBroker}
 }
 
 // Run starts the ingestion agent's main loop.
 // It subscribes to the destill_requests topic and processes incoming requests.
-func (a *IngestionAgent) Run() error {
+func (a *Agent) Run() error {
 	requestChannel, err := a.msgBroker.Subscribe("destill_requests")
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to destill_requests: %w", err)
@@ -40,7 +40,7 @@ func (a *IngestionAgent) Run() error {
 }
 
 // processRequest handles an incoming request message.
-func (a *IngestionAgent) processRequest(message []byte) error {
+func (a *Agent) processRequest(message []byte) error {
 	// Parse the incoming request
 	var request struct {
 		RequestID string `json:"request_id"`
@@ -56,12 +56,14 @@ func (a *IngestionAgent) processRequest(message []byte) error {
 
 	// Create a LogChunk from the request
 	// In a real implementation, this would fetch the actual log content from LogURL
+	// and populate Metadata with HTTP headers, content type, etc.
 	logChunk := contracts.LogChunk{
 		ID:        fmt.Sprintf("chunk-%d", time.Now().UnixNano()),
 		RequestID: request.RequestID,
 		JobName:   request.JobName,
 		Content:   fmt.Sprintf("Placeholder log content for %s", request.LogURL),
 		Timestamp: time.Now().Format(time.RFC3339),
+		Metadata:  make(map[string]string), // Will be populated with source metadata during log fetch
 	}
 
 	// Marshal and publish to ci_logs_raw topic
@@ -76,10 +78,4 @@ func (a *IngestionAgent) processRequest(message []byte) error {
 
 	fmt.Printf("[IngestionAgent] Published log chunk to 'ci_logs_raw'\n")
 	return nil
-}
-
-func main() {
-	fmt.Println("Destill Ingestion Agent")
-	fmt.Println("This agent should be started by the CLI orchestrator.")
-	fmt.Println("Run 'destill analyze' to start the full pipeline.")
 }
