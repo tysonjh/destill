@@ -178,7 +178,7 @@ func TestDetectSeverity(t *testing.T) {
 		expected string
 	}{
 		{"ERROR: something went wrong", "ERROR"},
-		{"FATAL: system crashed", "FATAL"},
+		{"FATAL: system crashed", "ERROR"}, // FATAL now returns ERROR (simplified severity)
 		{"error in processing", "ERROR"},
 		{"Warning: low disk space", "WARN"},
 		{"WARN: memory usage high", "WARN"},
@@ -233,15 +233,21 @@ func TestCalculateConfidenceScore(t *testing.T) {
 			maxScore: 1.0,
 		},
 		{
-			name:     "fatal error",
+			name:     "fatal error with high-signal anchor",
 			content:  "FATAL: system panic occurred",
-			minScore: 0.7,
+			minScore: 0.9, // +0.25 for high-signal, +0.20 for fatal/panic
 			maxScore: 1.0,
 		},
 		{
 			name:     "structured error with file and line",
 			content:  "Error in file main.go at line 123: connection failed",
 			minScore: 0.7,
+			maxScore: 1.0,
+		},
+		{
+			name:     "high-signal error anchor",
+			content:  "ERROR: connection refused to database",
+			minScore: 0.75, // +0.25 for high-signal anchor
 			maxScore: 1.0,
 		},
 		{
@@ -255,6 +261,31 @@ func TestCalculateConfidenceScore(t *testing.T) {
 			content:  "Processing request for user authentication",
 			minScore: 0.4,
 			maxScore: 0.6,
+		},
+		// Penalty pattern tests
+		{
+			name:     "connection reset with retry - transient error",
+			content:  "ERROR: connection reset, will retry in 5 seconds",
+			minScore: 0.0,
+			maxScore: 0.5, // -0.30 penalty for retry pattern
+		},
+		{
+			name:     "address already in use - transient error",
+			content:  "ERROR: bind failed - address already in use on port 8080",
+			minScore: 0.0,
+			maxScore: 0.55, // -0.25 penalty for address in use
+		},
+		{
+			name:     "tests passed - success message",
+			content:  "ERROR encountered during cleanup but all tests passed successfully",
+			minScore: 0.0,
+			maxScore: 0.4, // -0.35 penalty for test passed pattern
+		},
+		{
+			name:     "deprecation warning - informational",
+			content:  "ERROR: deprecated API usage detected, please update",
+			minScore: 0.0,
+			maxScore: 0.6, // -0.20 penalty for deprecation
 		},
 	}
 
@@ -397,10 +428,12 @@ func TestDetectSeverityEnhanced(t *testing.T) {
 		content  string
 		expected string
 	}{
-		{"FATAL: system panic", "FATAL"},
-		{"panic: runtime error", "FATAL"},
-		{"Segmentation fault (core dumped)", "FATAL"},
-		{"Out of memory error", "FATAL"},
+		// All error-like keywords now return ERROR (simplified severity)
+		// Quality differentiation is handled by confidence scoring
+		{"FATAL: system panic", "ERROR"},
+		{"panic: runtime error", "ERROR"},
+		{"Segmentation fault (core dumped)", "ERROR"},
+		{"Out of memory error", "ERROR"},
 		{"ERROR: connection failed", "ERROR"},
 		{"Exception in thread main", "ERROR"},
 		{"Unable to connect to database", "ERROR"},

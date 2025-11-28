@@ -48,6 +48,22 @@ var (
 
 	// Sequence numbers and incremental IDs: seq=123, id=456
 	sequencePattern = regexp.MustCompile(`(?i)\b(seq|sequence|id|index|count)[\s=:]*\d+\b`)
+
+	// High-signal anchor pattern: severity keywords appearing near the start of the line
+	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
+	// Character class: ] at start, - at end to avoid escaping issues
+	highSignalPattern = regexp.MustCompile(`(?i)^.{0,50}\b(?:FATAL|ERROR|PANIC|EXCEPTION|CRITICAL)\s*[]:|[-]`)
+
+	// Penalty patterns: high-confidence false positive indicators
+	// These reduce confidence scores to minimize false positive triage burden
+
+	// Transient network failures that often resolve on retry
+	connectionResetRetryPattern = regexp.MustCompile(`(?i)(conn(ection)?\s+(reset|refused|timeout).*retry|retry.*conn(ection)?\s+(reset|refused|timeout))`)
+	addressInUsePattern         = regexp.MustCompile(`(?i)address\s+already\s+in\s+use`)
+
+	// Success/informational messages that shouldn't be flagged as errors
+	testPassedPattern       = regexp.MustCompile(`(?i)(tests?\s+passed|all\s+tests?\s+(passed|succeeded)|build\s+succeeded|successfully\s+completed)`)
+	deprecationWarningPattern = regexp.MustCompile(`(?i)(deprecated|deprecation\s+warning)`)
 )
 
 // Agent subscribes to raw logs and performs analysis.
@@ -187,20 +203,17 @@ func (a *Agent) calculateMessageHash(normalizedMessage string) string {
 }
 
 // detectSeverity analyzes log content to determine severity level.
-// Uses pattern matching on common error keywords and patterns.
+// Uses a simplified approach: Permissive Detection (High Recall) + Confident Scoring (High Precision).
+// If any error-like keyword is present, tag as ERROR. The confidence score handles quality differentiation.
 func (a *Agent) detectSeverity(content string) string {
 	lowerContent := strings.ToLower(content)
 
-	// Critical/Fatal errors - highest priority
-	fatalKeywords := []string{"fatal", "panic", "segmentation fault", "core dumped", "out of memory"}
-	for _, keyword := range fatalKeywords {
-		if strings.Contains(lowerContent, keyword) {
-			return "FATAL"
-		}
+	// Combined error keywords - merge FATAL and ERROR for high recall
+	// Quality differentiation is handled by confidence scoring
+	errorKeywords := []string{
+		"fatal", "panic", "segmentation fault", "core dumped", "out of memory",
+		"error", "exception", "failed", "failure", "cannot", "unable to", "denied",
 	}
-
-	// Errors - high priority failures
-	errorKeywords := []string{"error", "exception", "failed", "failure", "cannot", "unable to", "denied"}
 	for _, keyword := range errorKeywords {
 		if strings.Contains(lowerContent, keyword) {
 			return "ERROR"
@@ -225,6 +238,11 @@ func (a *Agent) calculateConfidenceScore(content string) float64 {
 	score := 0.5 // Base score
 	lowerContent := strings.ToLower(content)
 
+	// High-signal anchor bonus: severity keywords near start of line with separator
+	if highSignalPattern.MatchString(content) {
+		score += 0.25
+	}
+
 	// Increase confidence for strong error indicators
 	if strings.Contains(lowerContent, "exception") {
 		score += 0.15
@@ -248,6 +266,25 @@ func (a *Agent) calculateConfidenceScore(content string) float64 {
 	// Decrease confidence for vague messages
 	if len(content) < 20 {
 		score -= 0.15
+	}
+
+	// PENALTIES: High-confidence false positive indicators
+	// These patterns indicate likely non-actionable errors
+
+	// Transient network failures that typically resolve on retry
+	if connectionResetRetryPattern.MatchString(content) {
+		score -= 0.30
+	}
+	if addressInUsePattern.MatchString(content) {
+		score -= 0.25
+	}
+
+	// Success/informational messages mistakenly containing error keywords
+	if testPassedPattern.MatchString(content) {
+		score -= 0.35
+	}
+	if deprecationWarningPattern.MatchString(content) {
+		score -= 0.20
 	}
 
 	// Cap the score between 0.0 and 1.0
