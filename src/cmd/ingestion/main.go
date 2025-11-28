@@ -6,53 +6,18 @@ import (
 	"fmt"
 	"time"
 
+	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 )
 
-// InMemoryBroker is a simple in-memory implementation of MessageBroker.
-type InMemoryBroker struct {
-	handlers map[string][]func(contracts.TriageCard) error
-}
-
-// NewInMemoryBroker creates a new InMemoryBroker instance.
-func NewInMemoryBroker() *InMemoryBroker {
-	return &InMemoryBroker{
-		handlers: make(map[string][]func(contracts.TriageCard) error),
-	}
-}
-
-// Publish sends a TriageCard to all handlers subscribed to the topic.
-func (b *InMemoryBroker) Publish(topic string, card contracts.TriageCard) error {
-	if handlers, ok := b.handlers[topic]; ok {
-		for _, handler := range handlers {
-			if err := handler(card); err != nil {
-				return err
-			}
-		}
-	}
-	fmt.Printf("[InMemoryBroker] Published to topic '%s': %+v\n", topic, card)
-	return nil
-}
-
-// Subscribe registers a handler for the specified topic.
-func (b *InMemoryBroker) Subscribe(topic string, handler func(contracts.TriageCard) error) error {
-	b.handlers[topic] = append(b.handlers[topic], handler)
-	return nil
-}
-
-// Close is a no-op for the in-memory broker.
-func (b *InMemoryBroker) Close() error {
-	return nil
-}
-
 // IngestionAgent processes log data and publishes TriageCards via a MessageBroker.
 type IngestionAgent struct {
-	broker contracts.MessageBroker
+	msgBroker contracts.MessageBroker
 }
 
 // NewIngestionAgent creates a new IngestionAgent with the given broker.
-func NewIngestionAgent(broker contracts.MessageBroker) *IngestionAgent {
-	return &IngestionAgent{broker: broker}
+func NewIngestionAgent(msgBroker contracts.MessageBroker) *IngestionAgent {
+	return &IngestionAgent{msgBroker: msgBroker}
 }
 
 // Ingest processes a raw log message and publishes it as a TriageCard.
@@ -65,17 +30,19 @@ func (a *IngestionAgent) Ingest(source, severity, message string) error {
 		Message:   message,
 		Metadata:  make(map[string]string),
 	}
-	return a.broker.Publish("triage", card)
+	return a.msgBroker.Publish("triage", card)
 }
 
 func main() {
 	fmt.Println("Destill Ingestion Agent starting...")
 
-	// Create broker and agent
-	var broker contracts.MessageBroker = NewInMemoryBroker()
-	defer broker.Close()
+	// Create broker using the shared implementation
+	inMemoryBroker := broker.NewInMemoryBroker()
+	inMemoryBroker.SetVerbose(true)
+	var msgBroker contracts.MessageBroker = inMemoryBroker
+	defer msgBroker.Close()
 
-	agent := NewIngestionAgent(broker)
+	agent := NewIngestionAgent(msgBroker)
 
 	// Example: Ingest some sample logs
 	samples := []struct {

@@ -6,57 +6,23 @@ import (
 	"fmt"
 	"strings"
 
+	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 )
 
-// InMemoryBroker is a simple in-memory implementation of MessageBroker.
-type InMemoryBroker struct {
-	handlers map[string][]func(contracts.TriageCard) error
-}
-
-// NewInMemoryBroker creates a new InMemoryBroker instance.
-func NewInMemoryBroker() *InMemoryBroker {
-	return &InMemoryBroker{
-		handlers: make(map[string][]func(contracts.TriageCard) error),
-	}
-}
-
-// Publish sends a TriageCard to all handlers subscribed to the topic.
-func (b *InMemoryBroker) Publish(topic string, card contracts.TriageCard) error {
-	if handlers, ok := b.handlers[topic]; ok {
-		for _, handler := range handlers {
-			if err := handler(card); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// Subscribe registers a handler for the specified topic.
-func (b *InMemoryBroker) Subscribe(topic string, handler func(contracts.TriageCard) error) error {
-	b.handlers[topic] = append(b.handlers[topic], handler)
-	return nil
-}
-
-// Close is a no-op for the in-memory broker.
-func (b *InMemoryBroker) Close() error {
-	return nil
-}
-
 // AnalysisAgent subscribes to TriageCards and performs analysis.
 type AnalysisAgent struct {
-	broker contracts.MessageBroker
+	msgBroker contracts.MessageBroker
 }
 
 // NewAnalysisAgent creates a new AnalysisAgent with the given broker.
-func NewAnalysisAgent(broker contracts.MessageBroker) *AnalysisAgent {
-	return &AnalysisAgent{broker: broker}
+func NewAnalysisAgent(msgBroker contracts.MessageBroker) *AnalysisAgent {
+	return &AnalysisAgent{msgBroker: msgBroker}
 }
 
 // Start begins listening for TriageCards on the specified topic.
 func (a *AnalysisAgent) Start(topic string) error {
-	return a.broker.Subscribe(topic, a.analyze)
+	return a.msgBroker.Subscribe(topic, a.analyze)
 }
 
 // analyze processes a TriageCard and performs analysis.
@@ -81,11 +47,11 @@ func (a *AnalysisAgent) analyze(card contracts.TriageCard) error {
 func main() {
 	fmt.Println("Destill Analysis Agent starting...")
 
-	// Create broker and agent
-	var broker contracts.MessageBroker = NewInMemoryBroker()
-	defer broker.Close()
+	// Create broker using the shared implementation
+	var msgBroker contracts.MessageBroker = broker.NewInMemoryBroker()
+	defer msgBroker.Close()
 
-	agent := NewAnalysisAgent(broker)
+	agent := NewAnalysisAgent(msgBroker)
 
 	// Subscribe to triage topic
 	if err := agent.Start("triage"); err != nil {
@@ -101,7 +67,7 @@ func main() {
 	}
 
 	for _, card := range testCards {
-		if err := broker.Publish("triage", card); err != nil {
+		if err := msgBroker.Publish("triage", card); err != nil {
 			fmt.Printf("Error publishing test card: %v\n", err)
 		}
 	}

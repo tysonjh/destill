@@ -6,44 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
+	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 )
-
-// InMemoryBroker is a simple in-memory implementation of MessageBroker for demonstration.
-type InMemoryBroker struct {
-	handlers map[string][]func(contracts.TriageCard) error
-}
-
-// NewInMemoryBroker creates a new InMemoryBroker instance.
-func NewInMemoryBroker() *InMemoryBroker {
-	return &InMemoryBroker{
-		handlers: make(map[string][]func(contracts.TriageCard) error),
-	}
-}
-
-// Publish sends a TriageCard to all handlers subscribed to the topic.
-func (b *InMemoryBroker) Publish(topic string, card contracts.TriageCard) error {
-	if handlers, ok := b.handlers[topic]; ok {
-		for _, handler := range handlers {
-			if err := handler(card); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// Subscribe registers a handler for the specified topic.
-func (b *InMemoryBroker) Subscribe(topic string, handler func(contracts.TriageCard) error) error {
-	b.handlers[topic] = append(b.handlers[topic], handler)
-	return nil
-}
-
-// Close is a no-op for the in-memory broker.
-func (b *InMemoryBroker) Close() error {
-	return nil
-}
 
 func main() {
 	// Define CLI flags
@@ -52,9 +19,9 @@ func main() {
 	severity := flag.String("severity", "INFO", "Log severity level")
 	flag.Parse()
 
-	// Ensure the broker implements the interface
-	var broker contracts.MessageBroker = NewInMemoryBroker()
-	defer broker.Close()
+	// Create broker using the shared implementation
+	var msgBroker contracts.MessageBroker = broker.NewInMemoryBroker()
+	defer msgBroker.Close()
 
 	switch *command {
 	case "ingest":
@@ -63,12 +30,12 @@ func main() {
 			os.Exit(1)
 		}
 		card := contracts.TriageCard{
-			ID:       "cli-001",
+			ID:       fmt.Sprintf("cli-%d", time.Now().UnixNano()),
 			Source:   "cli",
 			Severity: *severity,
 			Message:  *message,
 		}
-		if err := broker.Publish("logs", card); err != nil {
+		if err := msgBroker.Publish("logs", card); err != nil {
 			fmt.Printf("Error publishing message: %v\n", err)
 			os.Exit(1)
 		}

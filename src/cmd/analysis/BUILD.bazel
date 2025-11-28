@@ -5,7 +5,10 @@ go_library(
     srcs = ["main.go"],
     importpath = "destill-agent/src/cmd/analysis",
     visibility = ["//visibility:private"],
-    deps = ["//src/contracts"],
+    deps = [
+        "//src/broker",
+        "//src/contracts",
+    ],
 )
 
 go_binary(
