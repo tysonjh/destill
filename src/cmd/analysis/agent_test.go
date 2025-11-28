@@ -3,6 +3,7 @@ package analysis
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,7 +178,7 @@ func TestDetectSeverity(t *testing.T) {
 		expected string
 	}{
 		{"ERROR: something went wrong", "ERROR"},
-		{"FATAL: system crashed", "ERROR"},
+		{"FATAL: system crashed", "FATAL"},
 		{"error in processing", "ERROR"},
 		{"Warning: low disk space", "WARN"},
 		{"WARN: memory usage high", "WARN"},
@@ -215,13 +216,205 @@ func TestCalculateMessageHash(t *testing.T) {
 	}
 }
 
-// TestCalculateConfidenceScore verifies default confidence score.
+// TestCalculateConfidenceScore verifies confidence scoring based on content quality.
 func TestCalculateConfidenceScore(t *testing.T) {
 	agent := &Agent{}
 
-	score := agent.calculateConfidenceScore("any content")
+	tests := []struct {
+		name     string
+		content  string
+		minScore float64
+		maxScore float64
+	}{
+		{
+			name:     "exception with stack trace",
+			content:  "Exception in thread main: NullPointerException\nStack trace:\nat line 42",
+			minScore: 0.8,
+			maxScore: 1.0,
+		},
+		{
+			name:     "fatal error",
+			content:  "FATAL: system panic occurred",
+			minScore: 0.7,
+			maxScore: 1.0,
+		},
+		{
+			name:     "structured error with file and line",
+			content:  "Error in file main.go at line 123: connection failed",
+			minScore: 0.7,
+			maxScore: 1.0,
+		},
+		{
+			name:     "vague short message",
+			content:  "failed",
+			minScore: 0.0,
+			maxScore: 0.5,
+		},
+		{
+			name:     "regular log message",
+			content:  "Processing request for user authentication",
+			minScore: 0.4,
+			maxScore: 0.6,
+		},
+	}
 
-	if score != DefaultConfidenceScore {
-		t.Errorf("Expected default confidence score %v, got %v", DefaultConfidenceScore, score)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			score := agent.calculateConfidenceScore(test.content)
+			if score < test.minScore || score > test.maxScore {
+				t.Errorf("Score %v out of expected range [%v, %v] for content: %q",
+					score, test.minScore, test.maxScore, test.content)
+			}
+		})
+	}
+}
+
+// TestNormalizeLogComprehensive verifies all normalization patterns.
+func TestNormalizeLogComprehensive(t *testing.T) {
+	agent := &Agent{}
+
+	tests := []struct {
+		name        string
+		input       string
+		contains    []string // strings that should be present in normalized output
+		notContains []string // strings that should NOT be present
+	}{
+		{
+			name:        "timestamp removal - ISO format",
+			input:       "2025-11-28T10:30:45Z ERROR: connection failed",
+			contains:    []string{"[timestamp]", "error", "connection failed"},
+			notContains: []string{"2025-11-28", "10:30:45"},
+		},
+		{
+			name:        "UUID removal",
+			input:       "Request ID 550e8400-e29b-41d4-a716-446655440000 failed",
+			contains:    []string{"request", "[uuid]", "failed"},
+			notContains: []string{"550e8400"},
+		},
+		{
+			name:        "PID removal",
+			input:       "Process PID 12345 crashed with error",
+			contains:    []string{"process", "[pid]", "crashed"},
+			notContains: []string{"12345"},
+		},
+		{
+			name:        "memory address removal",
+			input:       "Null pointer at 0x7fff5fbff710",
+			contains:    []string{"null pointer", "[addr]"},
+			notContains: []string{"0x7fff"},
+		},
+		{
+			name:        "IP address removal",
+			input:       "Connection to 192.168.1.100 failed",
+			contains:    []string{"connection", "[ip]", "failed"},
+			notContains: []string{"192.168"},
+		},
+		{
+			name:        "port number removal",
+			input:       "Server on localhost:8080 unreachable",
+			contains:    []string{"server", "localhost", "[port]"},
+			notContains: []string{":8080"},
+		},
+		{
+			name:        "sequence number removal",
+			input:       "Error at seq=12345 in processing",
+			contains:    []string{"error", "[seq]", "processing"},
+			notContains: []string{"seq=12345"},
+		},
+		{
+			name:        "whitespace normalization",
+			input:       "ERROR:\t\t  Multiple    spaces   and\ttabs",
+			contains:    []string{"error", "multiple spaces and tabs"},
+			notContains: []string{"\t", "  "},
+		},
+		{
+			name:        "case normalization",
+			input:       "ERROR: Connection FAILED",
+			contains:    []string{"error: connection failed"},
+			notContains: []string{"ERROR", "FAILED"},
+		},
+		{
+			name:        "complex real-world log",
+			input:       "[2025-11-28 10:30:45.123] ERROR: Connection to 10.0.0.5:5432 failed for request 550e8400-e29b-41d4-a716-446655440000 (pid=1234, seq=5678)",
+			contains:    []string{"[timestamp]", "error", "connection", "[ip]", "[port]", "failed", "request", "[uuid]", "[pid]", "[seq]"},
+			notContains: []string{"2025-11-28", "10.0.0.5", "5432", "550e8400", "1234", "5678"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			normalized := agent.normalizeLog(test.input)
+
+			// Check for required strings
+			for _, substr := range test.contains {
+				if !strings.Contains(normalized, substr) {
+					t.Errorf("Normalized output should contain %q\nInput: %q\nOutput: %q",
+						substr, test.input, normalized)
+				}
+			}
+
+			// Check for strings that should be removed
+			for _, substr := range test.notContains {
+				if strings.Contains(normalized, substr) {
+					t.Errorf("Normalized output should NOT contain %q\nInput: %q\nOutput: %q",
+						substr, test.input, normalized)
+				}
+			}
+		})
+	}
+}
+
+// TestNormalizeLogRecurrence verifies that similar errors produce identical hashes.
+func TestNormalizeLogRecurrence(t *testing.T) {
+	agent := &Agent{}
+
+	// Two errors that are semantically the same but with different dynamic values
+	log1 := "[2025-11-28 10:00:00] ERROR: Connection to 192.168.1.5:5432 failed for request 550e8400-e29b-41d4-a716-446655440000 (pid=1234)"
+	log2 := "[2025-11-28 11:30:15] ERROR: Connection to 10.0.0.10:5432 failed for request 773d94b2-f5a1-4567-b890-123456789abc (pid=5678)"
+
+	normalized1 := agent.normalizeLog(log1)
+	normalized2 := agent.normalizeLog(log2)
+
+	hash1 := agent.calculateMessageHash(normalized1)
+	hash2 := agent.calculateMessageHash(normalized2)
+
+	if hash1 != hash2 {
+		t.Errorf("Similar errors should produce identical hashes after normalization")
+		t.Logf("Log 1: %s", log1)
+		t.Logf("Log 2: %s", log2)
+		t.Logf("Normalized 1: %s", normalized1)
+		t.Logf("Normalized 2: %s", normalized2)
+		t.Logf("Hash 1: %s", hash1)
+		t.Logf("Hash 2: %s", hash2)
+	}
+}
+
+// TestDetectSeverityEnhanced verifies enhanced severity detection.
+func TestDetectSeverityEnhanced(t *testing.T) {
+	agent := &Agent{}
+
+	tests := []struct {
+		content  string
+		expected string
+	}{
+		{"FATAL: system panic", "FATAL"},
+		{"panic: runtime error", "FATAL"},
+		{"Segmentation fault (core dumped)", "FATAL"},
+		{"Out of memory error", "FATAL"},
+		{"ERROR: connection failed", "ERROR"},
+		{"Exception in thread main", "ERROR"},
+		{"Unable to connect to database", "ERROR"},
+		{"Permission denied", "ERROR"},
+		{"Warning: deprecated API usage", "WARN"},
+		{"WARN: high memory usage", "WARN"},
+		{"INFO: request processed successfully", "INFO"},
+		{"Processing completed", "INFO"},
+	}
+
+	for _, test := range tests {
+		result := agent.detectSeverity(test.content)
+		if result != test.expected {
+			t.Errorf("detectSeverity(%q) = %q, want %q", test.content, result, test.expected)
+		}
 	}
 }

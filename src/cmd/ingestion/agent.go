@@ -13,14 +13,14 @@ import (
 
 // Agent consumes requests and publishes raw log data via a MessageBroker.
 type Agent struct {
-	msgBroker      contracts.MessageBroker
+	msgBroker       contracts.MessageBroker
 	buildkiteClient *buildkite.Client
 }
 
 // NewAgent creates a new IngestionAgent with the given broker and Buildkite API token.
 func NewAgent(msgBroker contracts.MessageBroker, buildkiteAPIToken string) *Agent {
 	return &Agent{
-		msgBroker:      msgBroker,
+		msgBroker:       msgBroker,
 		buildkiteClient: buildkite.NewClient(buildkiteAPIToken),
 	}
 }
@@ -128,7 +128,7 @@ func (a *Agent) processRequest(message []byte) error {
 			continue
 		}
 
-		fmt.Printf("[IngestionAgent] Published log chunk for job '%s' to 'ci_logs_raw' (%d bytes)\n", 
+		fmt.Printf("[IngestionAgent] Published log chunk for job '%s' to 'ci_logs_raw' (%d bytes)\n",
 			job.Name, len(logContent))
 	}
 
