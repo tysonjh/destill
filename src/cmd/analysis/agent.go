@@ -51,7 +51,8 @@ var (
 
 	// High-signal anchor pattern: severity keywords appearing near the start of the line
 	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
-	highSignalPattern = regexp.MustCompile(`(?i)^.{0,50}?\b(?:FATAL|ERROR|PANIC|EXCEPTION|CRITICAL)\s*[:\|\]\-]`)
+	// Character class: ] at start, - at end to avoid escaping issues
+	highSignalPattern = regexp.MustCompile(`(?i)^.{0,50}\b(?:FATAL|ERROR|PANIC|EXCEPTION|CRITICAL)\s*[]:|[-]`)
 )
 
 // Agent subscribes to raw logs and performs analysis.
