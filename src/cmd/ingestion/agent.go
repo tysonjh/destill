@@ -44,26 +44,32 @@ func (a *Agent) processRequest(message []byte) error {
 	// Parse the incoming request
 	var request struct {
 		RequestID string `json:"request_id"`
-		JobName   string `json:"job_name"`
-		LogURL    string `json:"log_url"`
+		BuildURL  string `json:"build_url"`
 	}
 
 	if err := json.Unmarshal(message, &request); err != nil {
 		return fmt.Errorf("failed to unmarshal request: %w", err)
 	}
 
-	fmt.Printf("[IngestionAgent] Processing request %s for job %s\n", request.RequestID, request.JobName)
+	fmt.Printf("[IngestionAgent] Processing build request %s\n", request.RequestID)
+	fmt.Printf("[IngestionAgent] Build URL: %s\n", request.BuildURL)
 
-	// Create a LogChunk from the request
-	// In a real implementation, this would fetch the actual log content from LogURL
-	// and populate Metadata with HTTP headers, content type, etc.
+	// In a real implementation, this would:
+	// 1. Fetch the build metadata from the Buildkite API
+	// 2. Discover all jobs in the build
+	// 3. For each job, fetch and publish its log content
+
+	// For now, create a placeholder LogChunk representing the build
+	// In production, this would be multiple LogChunks (one per job)
 	logChunk := contracts.LogChunk{
 		ID:        fmt.Sprintf("chunk-%d", time.Now().UnixNano()),
 		RequestID: request.RequestID,
-		JobName:   request.JobName,
-		Content:   fmt.Sprintf("Placeholder log content for %s", request.LogURL),
+		JobName:   "placeholder-job", // Will be populated per-job when fetching from Buildkite
+		Content:   fmt.Sprintf("Placeholder log content for build %s", request.BuildURL),
 		Timestamp: time.Now().Format(time.RFC3339),
-		Metadata:  make(map[string]string), // Will be populated with source metadata during log fetch
+		Metadata: map[string]string{
+			"build_url": request.BuildURL,
+		},
 	}
 
 	// Marshal and publish to ci_logs_raw topic

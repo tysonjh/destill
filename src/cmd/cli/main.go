@@ -69,27 +69,24 @@ the ranked failure cards in an interactive terminal interface.`,
 	},
 }
 
-// submitCmd represents the submit command
-var submitCmd = &cobra.Command{
-	Use:   "submit [log-url] [job-name]",
-	Short: "Submits a raw log URL to the pipeline for analysis.",
-	Long: `Submits a raw log URL to the destill_requests topic to kick off the
-streaming pipeline. The Ingestion Agent will pick up the request,
-fetch the log content, and publish it for analysis.`,
-	Args: cobra.ExactArgs(2),
+// buildCmd represents the build command
+var buildCmd = &cobra.Command{
+	Use:   "build [build-url]",
+	Short: "Submits an entire Buildkite build run for analysis.",
+	Long: `Submits a Buildkite URL (e.g., https://buildkite.com/org/pipeline/builds/4091) 
+to the destill_requests topic. The Ingestion Agent will then discover all job 
+logs associated with that build and process them.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		logURL := args[0]
-		jobName := args[1]
+		buildURL := args[0]
 
 		// Create the request payload
 		request := struct {
 			RequestID string `json:"request_id"`
-			JobName   string `json:"job_name"`
-			LogURL    string `json:"log_url"`
+			BuildURL  string `json:"build_url"`
 		}{
 			RequestID: fmt.Sprintf("req-%d", time.Now().UnixNano()),
-			JobName:   jobName,
-			LogURL:    logURL,
+			BuildURL:  buildURL,
 		}
 
 		// Marshal the request
@@ -105,9 +102,9 @@ fetch the log content, and publish it for analysis.`,
 			os.Exit(1)
 		}
 
-		fmt.Printf("Submitted request %s for job '%s'\n", request.RequestID, jobName)
-		fmt.Printf("Log URL: %s\n", logURL)
-		fmt.Println("The pipeline will process this request asynchronously.")
+		fmt.Printf("Submitted build request %s\n", request.RequestID)
+		fmt.Printf("Build URL: %s\n", buildURL)
+		fmt.Println("The pipeline will discover and process all job logs from this build.")
 	},
 }
 
@@ -135,7 +132,7 @@ func startStreamPipeline() {
 
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
-	rootCmd.AddCommand(submitCmd)
+	rootCmd.AddCommand(buildCmd)
 }
 
 func main() {
