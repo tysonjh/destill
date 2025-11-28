@@ -13,12 +13,15 @@ import (
 	"destill-agent/src/broker"
 	"destill-agent/src/cmd/analysis"
 	"destill-agent/src/cmd/ingestion"
+	"destill-agent/src/config"
 	"destill-agent/src/contracts"
 )
 
 var (
 	// Shared message broker for all agents
 	msgBroker contracts.MessageBroker
+	// Application configuration
+	appConfig *config.Config
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -32,6 +35,15 @@ It uses a stream processing architecture with:
 - Ingestion Agent: Consumes requests and fetches raw logs
 - Analysis Agent: Processes logs and produces ranked failure cards`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Load configuration from environment variables
+		var err error
+		appConfig, err = config.LoadFromEnv()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
+			fmt.Fprintln(os.Stderr, "Please set the BUILDKITE_API_TOKEN environment variable")
+			os.Exit(1)
+		}
+
 		// Initialize the broker before any command runs
 		inMemoryBroker := broker.NewInMemoryBroker()
 		inMemoryBroker.SetVerbose(true)
@@ -112,7 +124,7 @@ logs associated with that build and process them.`,
 // The agents run indefinitely until the broker is closed.
 func startStreamPipeline() {
 	// Start Ingestion Agent as a persistent goroutine
-	ingestionAgent := ingestion.NewAgent(msgBroker)
+	ingestionAgent := ingestion.NewAgent(msgBroker, appConfig.BuildkiteAPIToken)
 	go func() {
 		if err := ingestionAgent.Run(); err != nil {
 			fmt.Printf("[Pipeline] Ingestion agent error: %v\n", err)

@@ -21,8 +21,9 @@ func TestIngestionAgentMarshalsLogChunk(t *testing.T) {
 		t.Fatalf("Failed to subscribe to ci_logs_raw: %v", err)
 	}
 
-	// Create and start agent
-	agent := NewAgent(msgBroker)
+	// Create and start agent with a placeholder API token
+	// Note: This test will fail if it tries to make real API calls
+	agent := NewAgent(msgBroker, "test-token-placeholder")
 
 	// Start agent in goroutine
 	go func() {
@@ -86,7 +87,7 @@ func TestIngestionAgentHandlesInvalidRequest(t *testing.T) {
 	msgBroker := broker.NewInMemoryBroker()
 	defer msgBroker.Close()
 
-	agent := NewAgent(msgBroker)
+	agent := NewAgent(msgBroker, "test-token-placeholder")
 
 	// Process invalid JSON - should not panic
 	err := agent.processRequest([]byte("invalid json"))

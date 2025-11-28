@@ -24,8 +24,8 @@ func TestEndToEndPipelineFlow(t *testing.T) {
 		t.Fatalf("Failed to subscribe to ci_failures_ranked: %v", err)
 	}
 
-	// Start Ingestion Agent
-	ingestionAgent := ingestion.NewAgent(msgBroker)
+	// Start Ingestion Agent (with placeholder API token for testing)
+	ingestionAgent := ingestion.NewAgent(msgBroker, "test-token-placeholder")
 	go func() {
 		_ = ingestionAgent.Run()
 	}()
@@ -106,8 +106,8 @@ func TestPipelineMultipleRequests(t *testing.T) {
 		t.Fatalf("Failed to subscribe: %v", err)
 	}
 
-	// Start agents
-	ingestionAgent := ingestion.NewAgent(msgBroker)
+	// Start agents (with placeholder API token for testing)
+	ingestionAgent := ingestion.NewAgent(msgBroker, "test-token-placeholder")
 	go func() { _ = ingestionAgent.Run() }()
 
 	analysisAgent := analysis.NewAgent(msgBroker)
