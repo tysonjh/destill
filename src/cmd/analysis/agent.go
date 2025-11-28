@@ -53,6 +53,17 @@ var (
 	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
 	// Character class: ] at start, - at end to avoid escaping issues
 	highSignalPattern = regexp.MustCompile(`(?i)^.{0,50}\b(?:FATAL|ERROR|PANIC|EXCEPTION|CRITICAL)\s*[]:|[-]`)
+
+	// Penalty patterns: high-confidence false positive indicators
+	// These reduce confidence scores to minimize false positive triage burden
+
+	// Transient network failures that often resolve on retry
+	connectionResetRetryPattern = regexp.MustCompile(`(?i)(conn(ection)?\s+(reset|refused|timeout).*retry|retry.*conn(ection)?\s+(reset|refused|timeout))`)
+	addressInUsePattern         = regexp.MustCompile(`(?i)address\s+already\s+in\s+use`)
+
+	// Success/informational messages that shouldn't be flagged as errors
+	testPassedPattern       = regexp.MustCompile(`(?i)(tests?\s+passed|all\s+tests?\s+(passed|succeeded)|build\s+succeeded|successfully\s+completed)`)
+	deprecationWarningPattern = regexp.MustCompile(`(?i)(deprecated|deprecation\s+warning)`)
 )
 
 // Agent subscribes to raw logs and performs analysis.
@@ -255,6 +266,25 @@ func (a *Agent) calculateConfidenceScore(content string) float64 {
 	// Decrease confidence for vague messages
 	if len(content) < 20 {
 		score -= 0.15
+	}
+
+	// PENALTIES: High-confidence false positive indicators
+	// These patterns indicate likely non-actionable errors
+
+	// Transient network failures that typically resolve on retry
+	if connectionResetRetryPattern.MatchString(content) {
+		score -= 0.30
+	}
+	if addressInUsePattern.MatchString(content) {
+		score -= 0.25
+	}
+
+	// Success/informational messages mistakenly containing error keywords
+	if testPassedPattern.MatchString(content) {
+		score -= 0.35
+	}
+	if deprecationWarningPattern.MatchString(content) {
+		score -= 0.20
 	}
 
 	// Cap the score between 0.0 and 1.0

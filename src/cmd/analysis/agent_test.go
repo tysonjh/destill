@@ -262,6 +262,31 @@ func TestCalculateConfidenceScore(t *testing.T) {
 			minScore: 0.4,
 			maxScore: 0.6,
 		},
+		// Penalty pattern tests
+		{
+			name:     "connection reset with retry - transient error",
+			content:  "ERROR: connection reset, will retry in 5 seconds",
+			minScore: 0.0,
+			maxScore: 0.5, // -0.30 penalty for retry pattern
+		},
+		{
+			name:     "address already in use - transient error",
+			content:  "ERROR: bind failed - address already in use on port 8080",
+			minScore: 0.0,
+			maxScore: 0.55, // -0.25 penalty for address in use
+		},
+		{
+			name:     "tests passed - success message",
+			content:  "ERROR encountered during cleanup but all tests passed successfully",
+			minScore: 0.0,
+			maxScore: 0.4, // -0.35 penalty for test passed pattern
+		},
+		{
+			name:     "deprecation warning - informational",
+			content:  "ERROR: deprecated API usage detected, please update",
+			minScore: 0.0,
+			maxScore: 0.6, // -0.20 penalty for deprecation
+		},
 	}
 
 	for _, test := range tests {
