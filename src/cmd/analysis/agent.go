@@ -51,9 +51,10 @@ var (
 	sequencePattern = regexp.MustCompile(`(?i)\b(seq|sequence|id|index|count)[\s=:]*\d+\b`)
 
 	// Log line numbers (not source code line numbers)
-	// Matches patterns like: ,335]: or ,784 - where the number is between timestamp and message
-	// Does NOT match lineno:123 or line 456 which are useful for debugging
-	logLineNumberPattern = regexp.MustCompile(`,\d+[]:-]`)
+	// Only matches when immediately after [TIMESTAMP] placeholder to be conservative
+	// Matches patterns like: [TIMESTAMP],335]: or [TIMESTAMP],784 -
+	// Does NOT match standalone ,335 which might be important data
+	logLineNumberPattern = regexp.MustCompile(`\[TIMESTAMP\],\d+[]:-]`)
 
 	// High-signal anchor pattern: severity keywords appearing near the start of the line
 	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
