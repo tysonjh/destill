@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"destill-agent/src/contracts"
+	"destill-agent/src/logger"
 )
 
 // DefaultConfidenceScore is the default confidence score for placeholder analysis.
@@ -69,11 +70,15 @@ var (
 // Agent subscribes to raw logs and performs analysis.
 type Agent struct {
 	msgBroker contracts.MessageBroker
+	logger    logger.Logger
 }
 
-// NewAgent creates a new AnalysisAgent with the given broker.
-func NewAgent(msgBroker contracts.MessageBroker) *Agent {
-	return &Agent{msgBroker: msgBroker}
+// NewAgent creates a new AnalysisAgent with the given broker and logger.
+func NewAgent(msgBroker contracts.MessageBroker, log logger.Logger) *Agent {
+	return &Agent{
+		msgBroker: msgBroker,
+		logger:    log,
+	}
 }
 
 // Run starts the analysis agent's main loop.
@@ -84,7 +89,7 @@ func (a *Agent) Run() error {
 		return fmt.Errorf("failed to subscribe to ci_logs_raw: %w", err)
 	}
 
-	fmt.Println("[AnalysisAgent] Listening for logs on 'ci_logs_raw' topic...")
+	a.logger.Info("[AnalysisAgent] Listening for logs on 'ci_logs_raw' topic...")
 
 	for message := range logChannel {
 		// Launch processing in a Go routine for concurrency
@@ -101,16 +106,16 @@ func (a *Agent) processLogChunk(message []byte) {
 	// Deserialize the raw message into a LogChunk
 	var logChunk contracts.LogChunk
 	if err := json.Unmarshal(message, &logChunk); err != nil {
-		fmt.Printf("[AnalysisAgent] Error unmarshaling log chunk: %v\n", err)
+		a.logger.Error("[AnalysisAgent] Error unmarshaling log chunk: %v", err)
 		return
 	}
 
-	fmt.Printf("[AnalysisAgent] Processing log chunk %s for job %s\n", logChunk.ID, logChunk.JobName)
+	a.logger.Info("[AnalysisAgent] Processing log chunk %s for job %s", logChunk.ID, logChunk.JobName)
 
 	// Split the log content into individual lines
 	lines := strings.Split(logChunk.Content, "\n")
 
-	fmt.Printf("[AnalysisAgent] Analyzing %d log lines from job %s\n", len(lines), logChunk.JobName)
+	a.logger.Debug("[AnalysisAgent] Analyzing %d log lines from job %s", len(lines), logChunk.JobName)
 
 	// Process each line independently
 	for lineNum, line := range lines {
@@ -178,16 +183,16 @@ func (a *Agent) processLogChunk(message []byte) {
 		// Marshal and publish to ci_failures_ranked topic
 		data, err := json.Marshal(triageCard)
 		if err != nil {
-			fmt.Printf("[AnalysisAgent] Error marshaling triage card: %v\n", err)
+			a.logger.Error("[AnalysisAgent] Error marshaling triage card: %v", err)
 			continue
 		}
 
 		if err := a.msgBroker.Publish("ci_failures_ranked", data); err != nil {
-			fmt.Printf("[AnalysisAgent] Error publishing triage card: %v\n", err)
+			a.logger.Error("[AnalysisAgent] Error publishing triage card: %v", err)
 			continue
 		}
 
-		fmt.Printf("[AnalysisAgent] Published triage card for line %d (severity: %s, confidence: %.2f)\n",
+		a.logger.Debug("[AnalysisAgent] Published triage card for line %d (severity: %s, confidence: %.2f)",
 			lineNum+1, severity, confidenceScore)
 	}
 }

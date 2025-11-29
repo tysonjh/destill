@@ -9,6 +9,7 @@ import (
 
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
+	"destill-agent/src/logger"
 )
 
 // TestAnalysisAgentUnmarshalsLogChunk verifies the agent correctly unmarshals incoming LogChunk.
@@ -23,7 +24,7 @@ func TestAnalysisAgentUnmarshalsLogChunk(t *testing.T) {
 	}
 
 	// Create and start agent
-	agent := NewAgent(msgBroker)
+	agent := NewAgent(msgBroker, logger.NewSilentLogger())
 	go func() {
 		_ = agent.Run()
 	}()

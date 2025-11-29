@@ -10,6 +10,7 @@ import (
 	"destill-agent/src/cmd/analysis"
 	"destill-agent/src/cmd/ingestion"
 	"destill-agent/src/contracts"
+	"destill-agent/src/logger"
 )
 
 // TestEndToEndPipelineFlow tests the entire flow from request to ranked card.
@@ -25,13 +26,13 @@ func TestEndToEndPipelineFlow(t *testing.T) {
 	}
 
 	// Start Ingestion Agent (with placeholder API token for testing)
-	ingestionAgent := ingestion.NewAgent(msgBroker, "test-token-placeholder")
+	ingestionAgent := ingestion.NewAgent(msgBroker, "test-token-placeholder", logger.NewSilentLogger())
 	go func() {
 		_ = ingestionAgent.Run()
 	}()
 
 	// Start Analysis Agent
-	analysisAgent := analysis.NewAgent(msgBroker)
+	analysisAgent := analysis.NewAgent(msgBroker, logger.NewSilentLogger())
 	go func() {
 		_ = analysisAgent.Run()
 	}()
@@ -107,10 +108,10 @@ func TestPipelineMultipleRequests(t *testing.T) {
 	}
 
 	// Start agents (with placeholder API token for testing)
-	ingestionAgent := ingestion.NewAgent(msgBroker, "test-token-placeholder")
+	ingestionAgent := ingestion.NewAgent(msgBroker, "test-token-placeholder", logger.NewSilentLogger())
 	go func() { _ = ingestionAgent.Run() }()
 
-	analysisAgent := analysis.NewAgent(msgBroker)
+	analysisAgent := analysis.NewAgent(msgBroker, logger.NewSilentLogger())
 	go func() { _ = analysisAgent.Run() }()
 
 	time.Sleep(100 * time.Millisecond)
