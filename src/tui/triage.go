@@ -22,11 +22,8 @@ var (
 			Background(lipgloss.Color("236")). // Dark gray
 			Padding(0, 1)
 
-	// Selected row style - bold with bright background for visibility
+	// Selected row style - subtle with left indicator
 	selectedStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("15")). // White text
-			Background(lipgloss.Color("33")). // Bright blue background
 			Padding(0, 1)
 
 	// Normal row style
@@ -138,7 +135,6 @@ func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailViewport.SetContent(m.renderDetail())
 				m.detailViewport.GotoTop() // Reset detail scroll on selection change
 			}
-			m.listViewport.LineUp(1)
 		case "down", "j":
 			if m.cursor < len(m.cards)-1 {
 				m.cursor++
@@ -146,31 +142,26 @@ func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailViewport.SetContent(m.renderDetail())
 				m.detailViewport.GotoTop() // Reset detail scroll on selection change
 			}
-			m.listViewport.LineDown(1)
 		case "pgup", "b":
 			m.cursor = max(0, m.cursor-10)
 			m.listViewport.SetContent(m.renderList())
 			m.detailViewport.SetContent(m.renderDetail())
 			m.detailViewport.GotoTop()
-			m.listViewport.ViewUp()
 		case "pgdown", "f", " ":
 			m.cursor = min(len(m.cards)-1, m.cursor+10)
 			m.listViewport.SetContent(m.renderList())
 			m.detailViewport.SetContent(m.renderDetail())
 			m.detailViewport.GotoTop()
-			m.listViewport.ViewDown()
 		case "home", "g":
 			m.cursor = 0
 			m.listViewport.SetContent(m.renderList())
 			m.detailViewport.SetContent(m.renderDetail())
 			m.detailViewport.GotoTop()
-			m.listViewport.GotoTop()
 		case "end", "G":
 			m.cursor = len(m.cards) - 1
 			m.listViewport.SetContent(m.renderList())
 			m.detailViewport.SetContent(m.renderDetail())
 			m.detailViewport.GotoTop()
-			m.listViewport.GotoBottom()
 
 		// Scroll detail view independently
 		case "d":
@@ -200,9 +191,8 @@ func (m TriageModel) View() string {
 	var b strings.Builder
 
 	// Title
-	b.WriteString("\n")
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Destill - CI/CD Failure Triage Report"))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Top section: Failure list with header
 	header := fmt.Sprintf("%-*s %-*s %-*s %-*s",
@@ -265,11 +255,12 @@ func (m TriageModel) renderList() string {
 			snippet,
 		)
 
-		// Highlight selected row with cursor indicator
+		// Highlight selected row with subtle cursor indicator
 		if i == m.cursor {
-			b.WriteString(selectedStyle.Render("▸ " + row))
+			cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("► ")
+			b.WriteString(cursor + selectedStyle.Render(row))
 		} else {
-			b.WriteString(normalStyle.Render("  " + row))
+			b.WriteString("  " + normalStyle.Render(row))
 		}
 		b.WriteString("\n")
 	}
