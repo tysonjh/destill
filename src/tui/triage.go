@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"destill-agent/src/contracts"
@@ -18,7 +18,7 @@ var (
 	// Header style - bold and visually distinct
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("12")). // Bright blue
+			Foreground(lipgloss.Color("12")).  // Bright blue
 			Background(lipgloss.Color("236")). // Dark gray
 			Padding(0, 1)
 

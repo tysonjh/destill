@@ -50,6 +50,11 @@ var (
 	// Sequence numbers and incremental IDs: seq=123, id=456
 	sequencePattern = regexp.MustCompile(`(?i)\b(seq|sequence|id|index|count)[\s=:]*\d+\b`)
 
+	// Log line numbers (not source code line numbers)
+	// Matches patterns like: ,335]: or ,784 - where the number is between timestamp and message
+	// Does NOT match lineno:123 or line 456 which are useful for debugging
+	logLineNumberPattern = regexp.MustCompile(`,\d+[]:-]`)
+
 	// High-signal anchor pattern: severity keywords appearing near the start of the line
 	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
 	// Character class: ] at start, - at end to avoid escaping issues
@@ -222,16 +227,21 @@ func (a *Agent) normalizeLog(content string) string {
 	// Step 6: Remove port numbers (often dynamic)
 	normalized = portPattern.ReplaceAllString(normalized, ":[PORT]")
 
-	// Step 7: Remove sequence numbers and incremental IDs
+	// Step 7: Remove log file line numbers (e.g., ,335]: or ,784 -)
+	// These are just positions in the log file, not useful for grouping
+	// Preserves source code line numbers like lineno:123 which are valuable for debugging
+	normalized = logLineNumberPattern.ReplaceAllString(normalized, "[LINE]")
+
+	// Step 8: Remove sequence numbers and incremental IDs
 	normalized = sequencePattern.ReplaceAllString(normalized, "[SEQ]")
 
-	// Step 8: Normalize whitespace - replace multiple spaces/tabs/newlines with single space
+	// Step 9: Normalize whitespace - replace multiple spaces/tabs/newlines with single space
 	normalized = regexp.MustCompile(`\s+`).ReplaceAllString(normalized, " ")
 
-	// Step 9: Convert to lowercase for case-insensitive matching
+	// Step 10: Convert to lowercase for case-insensitive matching
 	normalized = strings.ToLower(normalized)
 
-	// Step 10: Trim leading/trailing whitespace
+	// Step 11: Trim leading/trailing whitespace
 	normalized = strings.TrimSpace(normalized)
 
 	return normalized
