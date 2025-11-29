@@ -163,6 +163,10 @@ func (a *Agent) processLogChunk(message []byte) {
 			continue
 		}
 
+		// Extract context lines for expandable view
+		preContext := a.extractPreContext(lines, lineNum, 5)
+		postContext := a.extractPostContext(lines, lineNum, 10)
+
 		// Create the TriageCard
 		// Metadata will be populated with analysis-specific information
 		metadata := make(map[string]string)
@@ -184,6 +188,8 @@ func (a *Agent) processLogChunk(message []byte) {
 			MessageHash:     messageHash,
 			JobName:         logChunk.JobName,
 			ConfidenceScore: confidenceScore,
+			PreContext:      preContext,
+			PostContext:     postContext,
 		}
 
 		// Marshal and publish to ci_failures_ranked topic
@@ -350,4 +356,34 @@ func (a *Agent) calculateConfidenceScore(content string) float64 {
 	}
 
 	return score
+}
+
+// extractPreContext extracts N lines of log context immediately preceding the error line.
+// Returns empty string if there are no preceding lines.
+func (a *Agent) extractPreContext(lines []string, currentLine, count int) string {
+	if currentLine == 0 {
+		return ""
+	}
+
+	start := currentLine - count
+	if start < 0 {
+		start = 0
+	}
+
+	return strings.Join(lines[start:currentLine], "\n")
+}
+
+// extractPostContext extracts N lines of log context immediately following the error line.
+// Returns empty string if there are no following lines.
+func (a *Agent) extractPostContext(lines []string, currentLine, count int) string {
+	if currentLine >= len(lines)-1 {
+		return ""
+	}
+
+	end := currentLine + count + 1
+	if end > len(lines) {
+		end = len(lines)
+	}
+
+	return strings.Join(lines[currentLine+1:end], "\n")
 }

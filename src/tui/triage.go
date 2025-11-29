@@ -31,6 +31,16 @@ var (
 	normalStyle = lipgloss.NewStyle().
 			Padding(0, 1)
 
+	// Context style - dimmed for readability
+	contextStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")). // Gray
+			Padding(0, 2)
+
+	// Error line highlight in context
+	errorLineStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("196")). // Red
+			Bold(true)
+
 	// Column widths
 	confidenceWidth = 12
 	recurrenceWidth = 12
@@ -44,14 +54,18 @@ type TriageModel struct {
 	cards    []contracts.TriageCard // Pre-sorted list of triage cards
 	viewport viewport.Model         // Viewport for scrolling content
 	ready    bool                   // Whether viewport is initialized
+	cursor   int                    // Currently selected row (tracked separately from viewport scroll)
+	expanded map[int]bool           // Tracks which rows are expanded
 }
 
 // NewTriageModel creates a new TriageModel with the given sorted triage cards.
 // Cards should be pre-sorted by ConfidenceScore (descending), then by RecurrenceCount.
 func NewTriageModel(cards []contracts.TriageCard) TriageModel {
 	return TriageModel{
-		cards: cards,
-		ready: false,
+		cards:    cards,
+		ready:    false,
+		cursor:   0,
+		expanded: make(map[int]bool),
 	}
 }
 
@@ -86,18 +100,34 @@ func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 
-		// Navigation handled by viewport
+		// Toggle expansion for current row
+		case "enter", " ":
+			m.expanded[m.cursor] = !m.expanded[m.cursor]
+			m.viewport.SetContent(m.renderTable())
+			return m, nil
+
+		// Navigation with cursor tracking
 		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
 			m.viewport.LineUp(1)
 		case "down", "j":
+			if m.cursor < len(m.cards)-1 {
+				m.cursor++
+			}
 			m.viewport.LineDown(1)
 		case "pgup", "b":
+			m.cursor = max(0, m.cursor-10)
 			m.viewport.ViewUp()
-		case "pgdown", "f", " ":
+		case "pgdown", "f":
+			m.cursor = min(len(m.cards)-1, m.cursor+10)
 			m.viewport.ViewDown()
 		case "home", "g":
+			m.cursor = 0
 			m.viewport.GotoTop()
 		case "end", "G":
+			m.cursor = len(m.cards) - 1
 			m.viewport.GotoBottom()
 		}
 	}
@@ -141,7 +171,7 @@ func (m TriageModel) View() string {
 
 	// Help text
 	b.WriteString("\n")
-	helpText := "Navigation: ↑/k up • ↓/j down • pgup/pgdn page • g/G top/bottom • q/ctrl+c quit"
+	helpText := "↑/↓ navigate • enter/space expand • pgup/pgdn page • g/G top/bottom • q quit"
 	b.WriteString(lipgloss.NewStyle().Faint(true).Render(helpText))
 	b.WriteString("\n")
 
@@ -153,7 +183,7 @@ func (m TriageModel) renderTable() string {
 	var b strings.Builder
 
 	// Table rows
-	for _, card := range m.cards {
+	for i, card := range m.cards {
 		// Recurrence count - if metadata has it
 		recurrenceCount := "1" // Default to 1 if not tracked yet
 		if count, ok := card.Metadata["recurrence_count"]; ok {
@@ -166,7 +196,7 @@ func (m TriageModel) renderTable() string {
 			snippet = snippet[:snippetWidth-3] + "..."
 		}
 
-		// Format row
+		// Format row with cursor indicator
 		row := fmt.Sprintf("%-*.2f %-*s %-*s %-*s",
 			confidenceWidth, card.ConfidenceScore,
 			recurrenceWidth, recurrenceCount,
@@ -174,9 +204,81 @@ func (m TriageModel) renderTable() string {
 			snippetWidth, snippet,
 		)
 
-		b.WriteString(normalStyle.Render(row))
+		// Add cursor indicator and apply style
+		if i == m.cursor {
+			if m.expanded[i] {
+				b.WriteString(selectedStyle.Render(row + " ▼"))
+			} else {
+				b.WriteString(selectedStyle.Render(row + " ▸"))
+			}
+		} else {
+			b.WriteString(normalStyle.Render(row))
+		}
 		b.WriteString("\n")
+
+		// If expanded, show context
+		if m.expanded[i] {
+			context := m.renderContext(card)
+			b.WriteString(context)
+			b.WriteString("\n")
+		}
 	}
 
 	return b.String()
+}
+
+// renderContext renders the pre/post context for an expanded triage card
+func (m TriageModel) renderContext(card contracts.TriageCard) string {
+	var b strings.Builder
+
+	// Job name header
+	jobName := card.JobName
+	if jobName == "" {
+		jobName = "unknown"
+	}
+	b.WriteString(contextStyle.Render(fmt.Sprintf("  Job: %s", jobName)))
+	b.WriteString("\n")
+
+	// Pre-context (lines before the error)
+	if card.PreContext != "" {
+		b.WriteString(contextStyle.Render("  ─── Context (before) ───"))
+		b.WriteString("\n")
+		for _, line := range strings.Split(card.PreContext, "\n") {
+			b.WriteString(contextStyle.Render(fmt.Sprintf("    %s", line)))
+			b.WriteString("\n")
+		}
+	}
+
+	// Error line (the actual detected failure)
+	b.WriteString(errorLineStyle.Render("  ─── ERROR LINE ───"))
+	b.WriteString("\n")
+	b.WriteString(errorLineStyle.Render(fmt.Sprintf("    %s", card.Message)))
+	b.WriteString("\n")
+
+	// Post-context (lines after the error)
+	if card.PostContext != "" {
+		b.WriteString(contextStyle.Render("  ─── Context (after) ───"))
+		b.WriteString("\n")
+		for _, line := range strings.Split(card.PostContext, "\n") {
+			b.WriteString(contextStyle.Render(fmt.Sprintf("    %s", line)))
+			b.WriteString("\n")
+		}
+	}
+
+	return b.String()
+}
+
+// Helper functions for min/max
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
