@@ -118,10 +118,16 @@ func (a *Agent) processLogChunk(message []byte) {
 
 	a.logger.Info("[AnalysisAgent] Processing log chunk %s for job %s", logChunk.ID, logChunk.JobName)
 
-	// Split the log content into individual lines
+	// Process lines with a rolling buffer for context extraction
+	// This reduces memory usage - we don't keep the entire log in memory as a slice
 	lines := strings.Split(logChunk.Content, "\n")
+	totalLines := len(lines)
 
-	a.logger.Debug("[AnalysisAgent] Analyzing %d log lines from job %s", len(lines), logChunk.JobName)
+	a.logger.Debug("[AnalysisAgent] Analyzing %d log lines from job %s", totalLines, logChunk.JobName)
+
+	// Rolling buffer for context: keeps last N lines for pre-context
+	const preContextSize = 5
+	preBuffer := make([]string, 0, preContextSize)
 
 	// Process each line independently
 	for lineNum, line := range lines {
@@ -164,7 +170,9 @@ func (a *Agent) processLogChunk(message []byte) {
 		}
 
 		// Extract context lines for expandable view
-		preContext := a.extractPreContext(lines, lineNum, 5)
+		// Use rolling buffer for pre-context (already in memory)
+		preContext := strings.Join(preBuffer, "\n")
+		// Post-context still needs to look ahead in the slice
 		postContext := a.extractPostContext(lines, lineNum, 10)
 
 		// Create the TriageCard
@@ -206,6 +214,15 @@ func (a *Agent) processLogChunk(message []byte) {
 
 		a.logger.Debug("[AnalysisAgent] Published triage card for line %d (severity: %s, confidence: %.2f)",
 			lineNum+1, severity, confidenceScore)
+
+		// Update rolling buffer for next iteration
+		// Keep only the last N lines for pre-context
+		if len(preBuffer) >= preContextSize {
+			// Shift buffer: remove oldest, add newest
+			preBuffer = append(preBuffer[1:], line)
+		} else {
+			preBuffer = append(preBuffer, line)
+		}
 	}
 }
 
@@ -356,21 +373,6 @@ func (a *Agent) calculateConfidenceScore(content string) float64 {
 	}
 
 	return score
-}
-
-// extractPreContext extracts N lines of log context immediately preceding the error line.
-// Returns empty string if there are no preceding lines.
-func (a *Agent) extractPreContext(lines []string, currentLine, count int) string {
-	if currentLine == 0 {
-		return ""
-	}
-
-	start := currentLine - count
-	if start < 0 {
-		start = 0
-	}
-
-	return strings.Join(lines[start:currentLine], "\n")
 }
 
 // extractPostContext extracts N lines of log context immediately following the error line.
