@@ -91,17 +91,22 @@ func (m TriageModel) Init() tea.Cmd {
 // Update handles messages and updates the model state.
 // Implements navigation and exit commands.
 func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.terminalWidth = msg.Width
 		m.terminalHeight = msg.Height
 
 		// Calculate split: 1/4 for list, 3/4 for detail
-		// Reserve space for: title (1) + header (2) + divider (1) + help (2) = 6 lines
-		availableHeight := msg.Height - 6
+		// Reserve space for: title (1) + blank (1) + header (1) + blank (1) +
+		// divider (1) + blank (1) + help (1) + blank (1) + 2 viewport blanks (2) = 10 lines
+		availableHeight := msg.Height - 10
+		if availableHeight < 8 {
+			availableHeight = 8 // Minimum workable height
+		}
 		listHeight := availableHeight / 4
+		if listHeight < 2 {
+			listHeight = 2
+		}
 		detailHeight := availableHeight - listHeight
 
 		if !m.ready {
@@ -171,9 +176,8 @@ func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Update list viewport (detail viewport is updated on navigation)
-	m.listViewport, cmd = m.listViewport.Update(msg)
-	return m, cmd
+	// Don't pass messages to viewport - we handle all navigation manually
+	return m, nil
 }
 
 // View renders the TUI display with split-view layout.
