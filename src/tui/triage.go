@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -17,7 +18,7 @@ var (
 	// Header style - bold and visually distinct
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("12")). // Bright blue
+			Foreground(lipgloss.Color("12")).  // Bright blue
 			Background(lipgloss.Color("236")). // Dark gray
 			Padding(0, 1)
 
@@ -40,16 +41,17 @@ var (
 // TriageModel is the Bubble Tea model for the Triage Reporter TUI.
 // It displays analyzed failure cards sorted by confidence score and recurrence.
 type TriageModel struct {
-	cards  []contracts.TriageCard // Pre-sorted list of triage cards
-	cursor int                     // Currently selected row index
+	cards    []contracts.TriageCard // Pre-sorted list of triage cards
+	viewport viewport.Model         // Viewport for scrolling content
+	ready    bool                   // Whether viewport is initialized
 }
 
 // NewTriageModel creates a new TriageModel with the given sorted triage cards.
 // Cards should be pre-sorted by ConfidenceScore (descending), then by RecurrenceCount.
 func NewTriageModel(cards []contracts.TriageCard) TriageModel {
 	return TriageModel{
-		cards:  cards,
-		cursor: 0,
+		cards: cards,
+		ready: false,
 	}
 }
 
@@ -61,33 +63,57 @@ func (m TriageModel) Init() tea.Cmd {
 // Update handles messages and updates the model state.
 // Implements navigation and exit commands.
 func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// Initialize viewport on first window size message
+		if !m.ready {
+			// Reserve space for title, header, and help text
+			headerHeight := 5 // Title + spacing + header + spacing
+			footerHeight := 2 // Help text + spacing
+			m.viewport = viewport.New(msg.Width, msg.Height-headerHeight-footerHeight)
+			m.viewport.SetContent(m.renderTable())
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - 7
+		}
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		// Exit commands
 		case "q", "ctrl+c":
 			return m, tea.Quit
 
-		// Navigation - up
+		// Navigation handled by viewport
 		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-
-		// Navigation - down
+			m.viewport.LineUp(1)
 		case "down", "j":
-			if m.cursor < len(m.cards)-1 {
-				m.cursor++
-			}
+			m.viewport.LineDown(1)
+		case "pgup", "b":
+			m.viewport.ViewUp()
+		case "pgdown", "f", " ":
+			m.viewport.ViewDown()
+		case "home", "g":
+			m.viewport.GotoTop()
+		case "end", "G":
+			m.viewport.GotoBottom()
 		}
 	}
 
-	return m, nil
+	// Update viewport
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
 }
 
 // View renders the TUI display.
 // Displays a table of triage cards with intelligence metrics.
 func (m TriageModel) View() string {
+	if !m.ready {
+		return "\nInitializing..."
+	}
+
 	// Handle empty input
 	if len(m.cards) == 0 {
 		return "\nNo failures detected or analyzed.\n\n"
@@ -110,8 +136,24 @@ func (m TriageModel) View() string {
 	b.WriteString(headerStyle.Render(header))
 	b.WriteString("\n")
 
+	// Viewport with table content
+	b.WriteString(m.viewport.View())
+
+	// Help text
+	b.WriteString("\n")
+	helpText := "Navigation: ↑/k up • ↓/j down • pgup/pgdn page • g/G top/bottom • q/ctrl+c quit"
+	b.WriteString(lipgloss.NewStyle().Faint(true).Render(helpText))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// renderTable generates the table content for the viewport
+func (m TriageModel) renderTable() string {
+	var b strings.Builder
+
 	// Table rows
-	for i, card := range m.cards {
+	for _, card := range m.cards {
 		// Recurrence count - if metadata has it
 		recurrenceCount := "1" // Default to 1 if not tracked yet
 		if count, ok := card.Metadata["recurrence_count"]; ok {
@@ -132,19 +174,9 @@ func (m TriageModel) View() string {
 			snippetWidth, snippet,
 		)
 
-		// Apply style based on selection
-		if i == m.cursor {
-			b.WriteString(selectedStyle.Render(row))
-		} else {
-			b.WriteString(normalStyle.Render(row))
-		}
+		b.WriteString(normalStyle.Render(row))
 		b.WriteString("\n")
 	}
-
-	// Help text
-	b.WriteString("\n")
-	b.WriteString(lipgloss.NewStyle().Faint(true).Render("Navigation: ↑/k up • ↓/j down • q/ctrl+c quit"))
-	b.WriteString("\n")
 
 	return b.String()
 }
