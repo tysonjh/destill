@@ -82,31 +82,25 @@ func NewTriageModel(cards []contracts.TriageCard) TriageModel {
 	}
 }
 
-// getListHeight calculates the list viewport height based on terminal size
+// getListHeight calculates the list viewport height - always 1/4 of available space
 func (m TriageModel) getListHeight() int {
-	// UI overhead: title + header + divider + help = 4 lines minimum
+	// Fixed overhead: title (1) + header (1) + divider (1) + help (1) = 4 lines
+	// Remaining space split 1/4 for list, 3/4 for detail
 	availableHeight := m.terminalHeight - 4
-	if availableHeight < 8 {
-		availableHeight = 8
+	if availableHeight < 20 {
+		availableHeight = 20 // Minimum reasonable height
 	}
-	listHeight := availableHeight / 4
-	if listHeight < 2 {
-		listHeight = 2
-	}
-	return listHeight
+	return availableHeight / 4
 }
 
-// getDetailHeight calculates the detail viewport height
+// getDetailHeight calculates the detail viewport height - always 3/4 of available space
 func (m TriageModel) getDetailHeight() int {
+	// Fixed overhead: title (1) + header (1) + divider (1) + help (1) = 4 lines
 	availableHeight := m.terminalHeight - 4
-	if availableHeight < 8 {
-		availableHeight = 8
+	if availableHeight < 20 {
+		availableHeight = 20
 	}
-	listHeight := availableHeight / 4
-	if listHeight < 2 {
-		listHeight = 2
-	}
-	return availableHeight - listHeight
+	return (availableHeight * 3) / 4
 }
 
 // Init initializes the model. Required by tea.Model interface.
@@ -179,7 +173,7 @@ func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	return m, nil
 } // View renders the TUI display with split-view layout.
-// Top section shows scrollable failure list, bottom shows detail for selected item.
+// Renders exactly m.terminalHeight lines - no more, no less.
 func (m TriageModel) View() string {
 	if m.terminalHeight == 0 {
 		return "Initializing..."
@@ -189,67 +183,61 @@ func (m TriageModel) View() string {
 		return "No failures detected or analyzed.\n"
 	}
 
+	// Get fixed region heights
 	listHeight := m.getListHeight()
 	detailHeight := m.getDetailHeight()
 
-	var sections []string
+	// Build output line by line - exactly terminalHeight lines
+	var lines []string
 
-	// Title
-	sections = append(sections, lipgloss.NewStyle().Bold(true).Render("Destill - CI/CD Failure Triage Report"))
+	// Line 1: Title
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Render("Destill - CI/CD Failure Triage Report"))
 
-	// Header for list
+	// Line 2: Header
 	header := fmt.Sprintf("%-*s %-*s %-*s %s",
 		confidenceWidth, "Confidence",
 		recurrenceWidth, "Recurrence",
 		hashWidth, "Hash",
 		"Error Message",
 	)
-	sections = append(sections, headerStyle.Render(header))
+	lines = append(lines, headerStyle.Render(header))
 
-	// Render visible list items (exactly listHeight lines)
+	// Lines 3 to 3+listHeight-1: List area (1/4 of available space)
 	listLines := m.renderList()
-	var listSection strings.Builder
-	visibleStart := m.listScroll
-	visibleEnd := min(visibleStart+listHeight, len(listLines))
-	for i := visibleStart; i < visibleEnd; i++ {
-		if i > visibleStart {
-			listSection.WriteString("\n")
+	for i := 0; i < listHeight; i++ {
+		lineIdx := m.listScroll + i
+		if lineIdx < len(listLines) {
+			lines = append(lines, listLines[lineIdx])
+		} else {
+			lines = append(lines, "") // Empty line for padding
 		}
-		listSection.WriteString(listLines[i])
 	}
-	// Pad remaining lines
-	for i := visibleEnd - visibleStart; i < listHeight; i++ {
-		listSection.WriteString("\n")
+
+	// Line after list: Divider
+	if m.terminalWidth > 0 {
+		lines = append(lines, dividerStyle.Render(strings.Repeat("─", m.terminalWidth)))
+	} else {
+		lines = append(lines, dividerStyle.Render(strings.Repeat("─", 80)))
 	}
-	sections = append(sections, listSection.String())
 
-	// Divider
-	divider := strings.Repeat("─", max(m.terminalWidth, 80))
-	sections = append(sections, dividerStyle.Render(divider))
-
-	// Render visible detail lines (exactly detailHeight lines)
+	// Next detailHeight lines: Detail area (3/4 of available space)
 	detailLines := m.renderDetail()
-	var detailSection strings.Builder
-	detailStart := m.detailScroll
-	detailEnd := min(detailStart+detailHeight, len(detailLines))
-	for i := detailStart; i < detailEnd; i++ {
-		if i > detailStart {
-			detailSection.WriteString("\n")
+	for i := 0; i < detailHeight; i++ {
+		lineIdx := m.detailScroll + i
+		if lineIdx < len(detailLines) {
+			lines = append(lines, detailLines[lineIdx])
+		} else {
+			lines = append(lines, "") // Empty line for padding
 		}
-		detailSection.WriteString(detailLines[i])
 	}
-	// Pad remaining lines
-	for i := detailEnd - detailStart; i < detailHeight; i++ {
-		detailSection.WriteString("\n")
-	}
-	sections = append(sections, detailSection.String())
 
-	// Help text
+	// Last line: Help text
 	helpText := "↑/↓ navigate • d/u scroll detail • g/G top/bottom • q quit"
-	sections = append(sections, lipgloss.NewStyle().Faint(true).Render(helpText))
+	lines = append(lines, lipgloss.NewStyle().Faint(true).Render(helpText))
 
-	// Join all sections with newlines
-	return strings.Join(sections, "\n")
+	// Should have exactly terminalHeight lines now
+	// Join with newlines (terminalHeight-1 newlines between terminalHeight lines)
+	return strings.Join(lines, "\n")
 }
 
 // renderList generates the failure list lines
