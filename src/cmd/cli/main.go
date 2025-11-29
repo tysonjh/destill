@@ -179,6 +179,39 @@ func getRecurrenceCount(card contracts.TriageCard) int {
 	return 1
 }
 
+// groupCardsByHash combines triage cards with the same message hash
+// Returns a deduplicated list with recurrence counts
+func groupCardsByHash(cards []contracts.TriageCard) []contracts.TriageCard {
+	hashMap := make(map[string]*contracts.TriageCard)
+
+	for _, card := range cards {
+		if existing, found := hashMap[card.MessageHash]; found {
+			// Increment recurrence count
+			count := getRecurrenceCount(*existing) + 1
+			if existing.Metadata == nil {
+				existing.Metadata = make(map[string]string)
+			}
+			existing.Metadata["recurrence_count"] = fmt.Sprintf("%d", count)
+		} else {
+			// First occurrence - create a copy and initialize count
+			cardCopy := card
+			if cardCopy.Metadata == nil {
+				cardCopy.Metadata = make(map[string]string)
+			}
+			cardCopy.Metadata["recurrence_count"] = "1"
+			hashMap[card.MessageHash] = &cardCopy
+		}
+	}
+
+	// Convert map to slice
+	grouped := make([]contracts.TriageCard, 0, len(hashMap))
+	for _, card := range hashMap {
+		grouped = append(grouped, *card)
+	}
+
+	return grouped
+}
+
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build [build-url]",
@@ -256,13 +289,18 @@ Example:
 		fmt.Printf("📊 Found %d failure(s). Launching TUI...\n", len(cards))
 		fmt.Println()
 
-		// Sort cards by confidence score (descending), then by recurrence count
-		sort.Slice(cards, func(i, j int) bool {
-			if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
-				return cards[i].ConfidenceScore > cards[j].ConfidenceScore
+		// Group cards by message hash to reduce noise
+		groupedCards := groupCardsByHash(cards)
+		fmt.Printf("📊 Grouped into %d unique failure types. Launching TUI...\n", len(groupedCards))
+		fmt.Println()
+
+		// Sort grouped cards by confidence score (descending), then by recurrence count
+		sort.Slice(groupedCards, func(i, j int) bool {
+			if groupedCards[i].ConfidenceScore != groupedCards[j].ConfidenceScore {
+				return groupedCards[i].ConfidenceScore > groupedCards[j].ConfidenceScore
 			}
-			countI := getRecurrenceCount(cards[i])
-			countJ := getRecurrenceCount(cards[j])
+			countI := getRecurrenceCount(groupedCards[i])
+			countJ := getRecurrenceCount(groupedCards[j])
 			return countI > countJ
 		})
 
@@ -270,7 +308,7 @@ Example:
 		time.Sleep(500 * time.Millisecond)
 
 		// Launch the TUI
-		model := tui.NewTriageModel(cards)
+		model := tui.NewTriageModel(groupedCards)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 
 		if _, err := p.Run(); err != nil {
