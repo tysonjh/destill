@@ -17,6 +17,7 @@ import (
 	"destill-agent/src/cmd/ingestion"
 	"destill-agent/src/config"
 	"destill-agent/src/contracts"
+	"destill-agent/src/logger"
 	"destill-agent/src/tui"
 )
 
@@ -25,6 +26,8 @@ var (
 	msgBroker contracts.MessageBroker
 	// Application configuration
 	appConfig *config.Config
+	// Flag to track if we're in --wait mode (affects logging)
+	isWaitMode bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -50,10 +53,13 @@ It uses a stream processing architecture with:
 		// Initialize the broker before any command runs
 		inMemoryBroker := broker.NewInMemoryBroker()
 
-		// Only enable verbose logging if NOT using --wait mode
-		// (--wait mode will launch TUI, so we don't want logs interfering)
+		// Check if we're in --wait mode
 		waitFlag := cmd.Flags().Lookup("wait")
-		if waitFlag == nil || waitFlag.Value.String() != "true" {
+		isWaitMode = waitFlag != nil && waitFlag.Value.String() == "true"
+
+		// Only enable verbose broker logging if NOT using --wait mode
+		// (--wait mode will launch TUI, so we don't want logs interfering)
+		if !isWaitMode {
 			inMemoryBroker.SetVerbose(true)
 		}
 
@@ -276,24 +282,40 @@ Example:
 
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
 // The agents run indefinitely until the broker is closed.
+// In --wait mode (TUI), uses silent logger to prevent log output from interfering with the display.
 func startStreamPipeline() {
+	// Choose logger based on mode:
+	// - Silent logger in --wait mode (prevents log pollution in TUI)
+	// - Console logger in normal mode (useful for debugging and monitoring)
+	var log logger.Logger
+	if isWaitMode {
+		log = logger.NewSilentLogger()
+	} else {
+		log = logger.NewConsoleLogger()
+	}
+
 	// Start Ingestion Agent as a persistent goroutine
-	ingestionAgent := ingestion.NewAgent(msgBroker, appConfig.BuildkiteAPIToken)
+	ingestionAgent := ingestion.NewAgent(msgBroker, appConfig.BuildkiteAPIToken, log)
 	go func() {
 		if err := ingestionAgent.Run(); err != nil {
-			fmt.Printf("[Pipeline] Ingestion agent error: %v\n", err)
+			// Error logging always goes to stderr even in silent mode
+			fmt.Fprintf(os.Stderr, "[Pipeline] Ingestion agent error: %v\n", err)
 		}
 	}()
 
 	// Start Analysis Agent as a persistent goroutine
-	analysisAgent := analysis.NewAgent(msgBroker)
+	analysisAgent := analysis.NewAgent(msgBroker, log)
 	go func() {
 		if err := analysisAgent.Run(); err != nil {
-			fmt.Printf("[Pipeline] Analysis agent error: %v\n", err)
+			// Error logging always goes to stderr even in silent mode
+			fmt.Fprintf(os.Stderr, "[Pipeline] Analysis agent error: %v\n", err)
 		}
 	}()
 
-	fmt.Println("[Pipeline] Stream processing pipeline started")
+	// Only log pipeline start in non-wait mode
+	if !isWaitMode {
+		log.Info("[Pipeline] Stream processing pipeline started")
+	}
 }
 
 func init() {

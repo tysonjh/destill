@@ -8,6 +8,7 @@ import (
 
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
+	"destill-agent/src/logger"
 )
 
 // TestIngestionAgentMarshalsLogChunk verifies the Ingestion Agent correctly marshals its output.
@@ -23,7 +24,7 @@ func TestIngestionAgentMarshalsLogChunk(t *testing.T) {
 
 	// Create and start agent with a placeholder API token
 	// Note: This test will fail if it tries to make real API calls
-	agent := NewAgent(msgBroker, "test-token-placeholder")
+	agent := NewAgent(msgBroker, "test-token-placeholder", logger.NewSilentLogger())
 
 	// Start agent in goroutine
 	go func() {
@@ -87,7 +88,7 @@ func TestIngestionAgentHandlesInvalidRequest(t *testing.T) {
 	msgBroker := broker.NewInMemoryBroker()
 	defer msgBroker.Close()
 
-	agent := NewAgent(msgBroker, "test-token-placeholder")
+	agent := NewAgent(msgBroker, "test-token-placeholder", logger.NewSilentLogger())
 
 	// Process invalid JSON - should not panic
 	err := agent.processRequest([]byte("invalid json"))
