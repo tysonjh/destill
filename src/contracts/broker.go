@@ -23,6 +23,10 @@ type TriageCard struct {
 	JobName string `json:"job_name"`
 	// Determines its rank in the stack (0.0 to 1.0).
 	ConfidenceScore float64 `json:"confidence_score"`
+	// Lines of log context immediately preceding the error (typically 5 lines).
+	PreContext string `json:"pre_context,omitempty"`
+	// Lines of log context immediately following the error (typically 10 lines).
+	PostContext string `json:"post_context,omitempty"`
 }
 
 // LogChunk represents a raw chunk of log data received from CI systems.
