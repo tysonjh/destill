@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -65,10 +64,9 @@ var (
 // - Bottom 3/4: Detail view with full context for selected failure
 type TriageModel struct {
 	cards          []contracts.TriageCard // Pre-sorted list of triage cards
-	listViewport   viewport.Model         // Top viewport for failure list
-	detailViewport viewport.Model         // Bottom viewport for detail view
-	ready          bool                   // Whether viewports are initialized
 	cursor         int                    // Currently selected row
+	listScroll     int                    // Scroll offset for list view
+	detailScroll   int                    // Scroll offset for detail view
 	terminalWidth  int                    // Terminal width for dynamic sizing
 	terminalHeight int                    // Terminal height for split calculation
 }
@@ -77,9 +75,10 @@ type TriageModel struct {
 // Cards should be pre-sorted by ConfidenceScore (descending), then by RecurrenceCount.
 func NewTriageModel(cards []contracts.TriageCard) TriageModel {
 	return TriageModel{
-		cards:  cards,
-		ready:  false,
-		cursor: 0,
+		cards:        cards,
+		cursor:       0,
+		listScroll:   0,
+		detailScroll: 0,
 	}
 }
 
@@ -96,140 +95,145 @@ func (m TriageModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.terminalWidth = msg.Width
 		m.terminalHeight = msg.Height
 
-		// Calculate split: 1/4 for list, 3/4 for detail
-		// Reserve space for: title (1) + blank (1) + header (1) + blank (1) +
-		// divider (1) + blank (1) + help (1) + blank (1) + 2 viewport blanks (2) = 10 lines
-		availableHeight := msg.Height - 10
-		if availableHeight < 8 {
-			availableHeight = 8 // Minimum workable height
-		}
-		listHeight := availableHeight / 4
+	case tea.KeyMsg:
+		// Calculate list height for smart scrolling
+		listHeight := (m.terminalHeight - 8) / 4
 		if listHeight < 2 {
 			listHeight = 2
 		}
-		detailHeight := availableHeight - listHeight
 
-		if !m.ready {
-			// Initialize both viewports
-			m.listViewport = viewport.New(msg.Width, listHeight)
-			m.detailViewport = viewport.New(msg.Width, detailHeight)
-			m.listViewport.SetContent(m.renderList())
-			m.detailViewport.SetContent(m.renderDetail())
-			m.ready = true
-		} else {
-			// Update viewport sizes and re-render on resize
-			m.listViewport.Width = msg.Width
-			m.listViewport.Height = listHeight
-			m.detailViewport.Width = msg.Width
-			m.detailViewport.Height = detailHeight
-			m.listViewport.SetContent(m.renderList())
-			m.detailViewport.SetContent(m.renderDetail())
-		}
-
-	case tea.KeyMsg:
 		switch msg.String() {
 		// Exit commands
 		case "q", "ctrl+c":
 			return m, tea.Quit
 
-		// Navigation updates both list highlight and detail view
+		// Navigation - update cursor and auto-scroll list
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
-				m.listViewport.SetContent(m.renderList())
-				m.detailViewport.SetContent(m.renderDetail())
-				m.detailViewport.GotoTop() // Reset detail scroll on selection change
+				// Auto-scroll list if cursor goes above visible area
+				if m.cursor < m.listScroll {
+					m.listScroll = m.cursor
+				}
+				m.detailScroll = 0 // Reset detail scroll when changing items
 			}
 		case "down", "j":
 			if m.cursor < len(m.cards)-1 {
 				m.cursor++
-				m.listViewport.SetContent(m.renderList())
-				m.detailViewport.SetContent(m.renderDetail())
-				m.detailViewport.GotoTop() // Reset detail scroll on selection change
+				// Auto-scroll list if cursor goes below visible area
+				if m.cursor >= m.listScroll+listHeight {
+					m.listScroll = m.cursor - listHeight + 1
+				}
+				m.detailScroll = 0 // Reset detail scroll when changing items
 			}
 		case "pgup", "b":
 			m.cursor = max(0, m.cursor-10)
-			m.listViewport.SetContent(m.renderList())
-			m.detailViewport.SetContent(m.renderDetail())
-			m.detailViewport.GotoTop()
+			m.listScroll = max(0, m.cursor-listHeight/2)
+			m.detailScroll = 0
 		case "pgdown", "f", " ":
 			m.cursor = min(len(m.cards)-1, m.cursor+10)
-			m.listViewport.SetContent(m.renderList())
-			m.detailViewport.SetContent(m.renderDetail())
-			m.detailViewport.GotoTop()
+			m.listScroll = max(0, min(m.cursor-listHeight/2, len(m.cards)-listHeight))
+			m.detailScroll = 0
 		case "home", "g":
 			m.cursor = 0
-			m.listViewport.SetContent(m.renderList())
-			m.detailViewport.SetContent(m.renderDetail())
-			m.detailViewport.GotoTop()
+			m.listScroll = 0
+			m.detailScroll = 0
 		case "end", "G":
 			m.cursor = len(m.cards) - 1
-			m.listViewport.SetContent(m.renderList())
-			m.detailViewport.SetContent(m.renderDetail())
-			m.detailViewport.GotoTop()
+			m.listScroll = max(0, len(m.cards)-listHeight)
+			m.detailScroll = 0
 
 		// Scroll detail view independently
 		case "d":
-			m.detailViewport.LineDown(1)
+			m.detailScroll++
 		case "u":
-			m.detailViewport.LineUp(1)
+			if m.detailScroll > 0 {
+				m.detailScroll--
+			}
 		}
 	}
 
-	// Don't pass messages to viewport - we handle all navigation manually
 	return m, nil
-}
-
-// View renders the TUI display with split-view layout.
+} // View renders the TUI display with split-view layout.
 // Top section shows scrollable failure list, bottom shows detail for selected item.
 func (m TriageModel) View() string {
-	if !m.ready {
-		return "\nInitializing..."
+	if m.terminalHeight == 0 {
+		return "Initializing..."
 	}
 
-	// Handle empty input
 	if len(m.cards) == 0 {
-		return "\nNo failures detected or analyzed.\n\n"
+		return "No failures detected or analyzed.\n"
 	}
 
 	var b strings.Builder
+
+	// Calculate heights
+	// UI overhead: title (1) + header (1) + divider (1) + help (1) = 4 lines
+	availableHeight := m.terminalHeight - 4
+	if availableHeight < 8 {
+		availableHeight = 8
+	}
+	listHeight := availableHeight / 4
+	if listHeight < 2 {
+		listHeight = 2
+	}
+	detailHeight := availableHeight - listHeight
 
 	// Title
 	b.WriteString(lipgloss.NewStyle().Bold(true).Render("Destill - CI/CD Failure Triage Report"))
 	b.WriteString("\n")
 
-	// Top section: Failure list with header
-	header := fmt.Sprintf("%-*s %-*s %-*s %-*s",
+	// Header for list
+	header := fmt.Sprintf("%-*s %-*s %-*s %s",
 		confidenceWidth, "Confidence",
 		recurrenceWidth, "Recurrence",
 		hashWidth, "Hash",
-		m.terminalWidth-confidenceWidth-recurrenceWidth-hashWidth-10, "Error Message",
+		"Error Message",
 	)
 	b.WriteString(headerStyle.Render(header))
 	b.WriteString("\n")
-	b.WriteString(m.listViewport.View())
 
-	// Divider between list and detail
-	b.WriteString("\n")
+	// Render visible list items
+	listLines := m.renderList()
+	visibleStart := m.listScroll
+	visibleEnd := min(visibleStart+listHeight, len(listLines))
+	for i := visibleStart; i < visibleEnd; i++ {
+		b.WriteString(listLines[i])
+		b.WriteString("\n")
+	}
+	// Pad if needed
+	for i := visibleEnd - visibleStart; i < listHeight; i++ {
+		b.WriteString("\n")
+	}
+
+	// Divider
 	divider := strings.Repeat("─", m.terminalWidth)
 	b.WriteString(dividerStyle.Render(divider))
 	b.WriteString("\n")
 
-	// Bottom section: Detail view
-	b.WriteString(m.detailViewport.View())
+	// Render visible detail lines
+	detailLines := m.renderDetail()
+	detailStart := m.detailScroll
+	detailEnd := min(detailStart+detailHeight, len(detailLines))
+	for i := detailStart; i < detailEnd; i++ {
+		b.WriteString(detailLines[i])
+		b.WriteString("\n")
+	}
+	// Pad if needed
+	for i := detailEnd - detailStart; i < detailHeight; i++ {
+		b.WriteString("\n")
+	}
 
 	// Help text
-	b.WriteString("\n")
 	helpText := "↑/↓ navigate list • d/u scroll detail • g/G top/bottom • q quit"
 	b.WriteString(lipgloss.NewStyle().Faint(true).Render(helpText))
-	b.WriteString("\n")
 
 	return b.String()
 }
 
-// renderList generates the failure list content for the top viewport
-func (m TriageModel) renderList() string {
-	var b strings.Builder
+// renderList generates the failure list lines
+func (m TriageModel) renderList() []string {
+	var lines []string
 
 	// Calculate dynamic snippet width
 	fixedWidth := confidenceWidth + recurrenceWidth + hashWidth + 10
@@ -262,24 +266,23 @@ func (m TriageModel) renderList() string {
 		// Highlight selected row with subtle cursor indicator
 		if i == m.cursor {
 			cursor := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Render("► ")
-			b.WriteString(cursor + selectedStyle.Render(row))
+			lines = append(lines, cursor+selectedStyle.Render(row))
 		} else {
-			b.WriteString("  " + normalStyle.Render(row))
+			lines = append(lines, "  "+normalStyle.Render(row))
 		}
-		b.WriteString("\n")
 	}
 
-	return b.String()
+	return lines
 }
 
-// renderDetail generates the detail view content for the bottom viewport
-func (m TriageModel) renderDetail() string {
+// renderDetail generates the detail view lines for the selected failure
+func (m TriageModel) renderDetail() []string {
 	if m.cursor >= len(m.cards) {
-		return "No failure selected"
+		return []string{"No failure selected"}
 	}
 
 	card := m.cards[m.cursor]
-	var b strings.Builder
+	var lines []string
 
 	// Detail header with job info
 	jobName := card.JobName
@@ -293,42 +296,37 @@ func (m TriageModel) renderDetail() string {
 
 	headerText := fmt.Sprintf("Job: %s │ Confidence: %.2f │ Occurrences: %s │ Hash: %s",
 		jobName, card.ConfidenceScore, recurrenceCount, card.MessageHash[:8])
-	b.WriteString(detailHeaderStyle.Render(headerText))
-	b.WriteString("\n\n")
+	lines = append(lines, detailHeaderStyle.Render(headerText))
+	lines = append(lines, "")
 
 	// Pre-context (lines before the error)
 	if card.PreContext != "" {
-		b.WriteString(contextStyle.Render("─── Context (before) ───"))
-		b.WriteString("\n")
+		lines = append(lines, contextStyle.Render("─── Context (before) ───"))
 		for _, line := range strings.Split(card.PreContext, "\n") {
 			if strings.TrimSpace(line) != "" {
-				b.WriteString(contextStyle.Render(line))
-				b.WriteString("\n")
+				lines = append(lines, contextStyle.Render(line))
 			}
 		}
-		b.WriteString("\n")
+		lines = append(lines, "")
 	}
 
 	// Error line (the actual detected failure)
-	b.WriteString(errorLineStyle.Render("─── ERROR LINE ───"))
-	b.WriteString("\n")
+	lines = append(lines, errorLineStyle.Render("─── ERROR LINE ───"))
 	errorMsg := cleanDisplayMessage(card.Message)
-	b.WriteString(errorLineStyle.Render(errorMsg))
-	b.WriteString("\n\n")
+	lines = append(lines, errorLineStyle.Render(errorMsg))
+	lines = append(lines, "")
 
 	// Post-context (lines after the error)
 	if card.PostContext != "" {
-		b.WriteString(contextStyle.Render("─── Context (after) ───"))
-		b.WriteString("\n")
+		lines = append(lines, contextStyle.Render("─── Context (after) ───"))
 		for _, line := range strings.Split(card.PostContext, "\n") {
 			if strings.TrimSpace(line) != "" {
-				b.WriteString(contextStyle.Render(line))
-				b.WriteString("\n")
+				lines = append(lines, contextStyle.Render(line))
 			}
 		}
 	}
 
-	return b.String()
+	return lines
 }
 
 // cleanDisplayMessage removes normalized placeholders to show meaningful error content
