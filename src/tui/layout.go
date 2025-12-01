@@ -17,15 +17,12 @@ func (m MainModel) View() string {
 	headerHeight := lipgloss.Height(header)
 
 	// Calculate available height for panels
-	// Account for: header + help line + panel borders (2 lines per panel)
-	availableHeight := m.height - headerHeight - 2 - 2
+	// Account for: header + help line + list panel header row
+	availableHeight := m.height - headerHeight - 1 - 1
 
 	// Two-panel layout: Triage List (40%) | Context Detail (60%)
-	// Account for borders: each panel has a border (2 chars each side = 4 total per panel)
-	// But when joined horizontally, borders overlap at the join point
-	// So total width used by borders = 2 (left panel left+right) + 2 (right panel left+right) = 4
-	totalBorderWidth := 4
-	contentWidth := m.width - totalBorderWidth
+	// The lipgloss JoinHorizontal function handles the space.
+	contentWidth := m.width
 	leftPanelWidth := int(float64(contentWidth) * 0.4)
 	rightPanelWidth := contentWidth - leftPanelWidth
 
@@ -68,17 +65,21 @@ func (m MainModel) renderHelpText() string {
 
 // resizeComponents handles window resize events
 func (m *MainModel) resizeComponents() {
+	headerHeight := lipgloss.Height(m.header.Render(m.width))
+	// Account for: header + help line + list panel header row
+	availableHeight := m.height - headerHeight - 1 - 1
+
 	// Calculate panel dimensions
-	leftPanelWidth := int(float64(m.width) * 0.4)
-	rightPanelWidth := m.width - leftPanelWidth
-	availableHeight := m.height - 7 // header(3) + help(1) + borders(2) + padding(1)
+	contentWidth := m.width
+	leftPanelWidth := int(float64(contentWidth) * 0.4)
+	rightPanelWidth := contentWidth - leftPanelWidth
 
 	// Resize list view
-	m.listView.SetSize(leftPanelWidth-4, availableHeight)
+	m.listView.SetSize(leftPanelWidth-2, availableHeight)
 
 	// Resize viewport for detail panel (accounting for borders and job header)
-	m.detailViewport.Width = rightPanelWidth - 4
-	m.detailViewport.Height = availableHeight - 4
+	m.detailViewport.Width = rightPanelWidth - 2
+	m.detailViewport.Height = availableHeight - 1 // -1 for the job header row
 
 	// Initialize detail content if not already set and we have items
 	if m.detailViewport.TotalLineCount() == 0 {

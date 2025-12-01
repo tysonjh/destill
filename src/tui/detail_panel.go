@@ -65,10 +65,9 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 
 // updateDetailContent updates the viewport with content from the selected item
 func (m *MainModel) updateDetailContent(item Item) {
-	// Use the viewport's configured width for wrapping
-	// Viewport.Width already accounts for border (rightPanelWidth - 4)
-	// Subtract additional padding for internal margins
-	maxWidth := m.detailViewport.Width - 2
+	// The viewport's width is the max width for the content.
+	// Subtract a small amount for internal padding.
+	maxWidth := m.detailViewport.Width - 2 // 1 char padding on each side
 	content := m.renderDetail(item, maxWidth)
 	m.detailViewport.SetContent(content)
 }

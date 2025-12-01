@@ -64,40 +64,15 @@ func Wrap(text string, width int) string {
 				result.WriteString("\n")
 				lineLength = 0
 			}
-
-			// Break the long word into chunks
-			for len(word) > 0 {
-				// Truncate to fit width and add to result
+			// Break the long word
+			for VisualWidth(word) > width {
 				chunk := runewidth.Truncate(word, width, "")
-				chunkLen := VisualWidth(chunk)
 				result.WriteString(chunk)
-
-				// Remove the chunk from word using runewidth-aware slicing
-				// Count runes until we reach the visual width
-				runeCount := 0
-				currentWidth := 0
-				for _, r := range word {
-					if currentWidth >= chunkLen {
-						break
-					}
-					runeCount++
-					currentWidth += runewidth.RuneWidth(r)
-				}
-				// Slice by rune count
-				runes := []rune(word)
-				if runeCount < len(runes) {
-					word = string(runes[runeCount:])
-				} else {
-					word = ""
-				}
-
-				// Add newline if there's more to process
-				if len(word) > 0 {
-					result.WriteString("\n")
-				}
+				result.WriteString("\n")
+				word = word[len(chunk):]
 			}
-			lineLength = 0
-			continue
+			result.WriteString(word)
+			lineLength = VisualWidth(word)
 		}
 
 		// Normal word handling
