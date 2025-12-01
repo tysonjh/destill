@@ -13,7 +13,12 @@ func VisualWidth(s string) int {
 
 // Truncate truncates text to maxLen characters (visual width) with optional ellipsis
 func Truncate(s string, maxLen int, ellipsis bool) string {
+	// Replace newlines and tabs with spaces to ensure single-line display
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", "")
+	s = strings.ReplaceAll(s, "\t", " ")
 	s = strings.TrimSpace(s)
+	
 	if maxLen <= 0 {
 		return ""
 	}
