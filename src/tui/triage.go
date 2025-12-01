@@ -79,20 +79,17 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		
+
 		if !m.ready {
 			// Calculate initial dimensions for viewport
-			// We use the logic from resizeComponents here manually or just call it
-			// But to match example, we might want to be explicit about initialization
-			
 			headerHeight := lipgloss.Height(m.header.Render(m.width))
-			availableHeight := m.height - headerHeight - 1 - 1
+			// Account for: header (2) + help line (1) + panel column header row (1) + panel borders (2)
+			availableHeight := m.height - headerHeight - 1 - 1 - 2
 			contentWidth := m.width
 			leftPanelWidth := int(float64(contentWidth) * 0.4)
 			rightPanelWidth := contentWidth - leftPanelWidth
-			
+
 			m.detailViewport = viewport.New(rightPanelWidth-2, availableHeight-1)
-			m.detailViewport.YPosition = headerHeight + 1 // Approx?
 			m.ready = true
 		}
 

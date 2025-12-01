@@ -11,24 +11,35 @@ import (
 func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	content := strings.Builder{}
 
-	// Detail Header
+	// Detail Header - truncate hash to keep header on one line
+	// Format: "Hash: XXXXX | Severity: XXX | Job: XXX"
+	// We truncate the hash to ensure the whole header fits within maxWidth
+	shortHash := item.Card.MessageHash
+	if len(shortHash) > 12 {
+		shortHash = shortHash[:12] // Show first 12 chars of hash
+	}
+	headerText := fmt.Sprintf("Hash: %s | Severity: %s | Job: %s",
+		shortHash,
+		item.Card.Severity,
+		Truncate(item.Card.JobName, maxWidth-40, true)) // Reserve space for hash/severity
+	// Truncate the entire header if still too long
+	headerText = Truncate(headerText, maxWidth, true)
 	header := lipgloss.NewStyle().
 		Foreground(m.styles.PrimaryBlue).
 		Bold(true).
-		Render(fmt.Sprintf("Hash: %s | Severity: %s | Job: %s",
-			item.Card.MessageHash,
-			item.Card.Severity,
-			item.Card.JobName))
+		Render(headerText)
 	fmt.Fprintf(&content, "%s\n\n", header)
 
-	// Pre-context
+	// Pre-context - clean and wrap each line
 	preContext := item.GetPreContext()
 	if len(preContext) > 0 {
 		fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Bold(true).Render("Pre-Context:"))
 		for _, line := range preContext {
-			if strings.TrimSpace(line) != "" {
+			// Clean Buildkite escape sequences and normalize
+			cleanLine := CleanLogText(line)
+			if strings.TrimSpace(cleanLine) != "" {
 				// Wrap line before styling
-				wrapped := Wrap(line, maxWidth)
+				wrapped := Wrap(cleanLine, maxWidth)
 				fmt.Fprint(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(wrapped))
 				fmt.Fprintln(&content)
 			}
@@ -36,9 +47,10 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 		fmt.Fprintln(&content, "")
 	}
 
-	// Error Message (Highlight) - wrap before styling
+	// Error Message (Highlight) - clean and wrap before styling
 	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render("ERROR:"))
-	wrappedError := Wrap(item.Card.Message, maxWidth)
+	cleanMessage := CleanLogText(item.Card.Message)
+	wrappedError := Wrap(cleanMessage, maxWidth)
 	fmt.Fprint(&content, lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FF0000")).
 		Background(lipgloss.Color("#2D0000")).
@@ -46,14 +58,16 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	fmt.Fprintln(&content, "")
 	fmt.Fprintln(&content, "")
 
-	// Post-context
+	// Post-context - clean and wrap each line
 	postContext := item.GetPostContext()
 	if len(postContext) > 0 {
 		fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Bold(true).Render("Post-Context:"))
 		for _, line := range postContext {
-			if strings.TrimSpace(line) != "" {
+			// Clean Buildkite escape sequences and normalize
+			cleanLine := CleanLogText(line)
+			if strings.TrimSpace(cleanLine) != "" {
 				// Wrap line before styling
-				wrapped := Wrap(line, maxWidth)
+				wrapped := Wrap(cleanLine, maxWidth)
 				fmt.Fprint(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(wrapped))
 				fmt.Fprintln(&content)
 			}
@@ -106,7 +120,7 @@ func (m MainModel) renderDetailPanel(width, height int) string {
 	// No selection - show empty state
 	placeholderRow := lipgloss.NewStyle().
 		Foreground(m.styles.TextSecondary).
-		Width(width - 2).
+		Width(width-2).
 		Padding(0, 1).
 		Render(" ")
 

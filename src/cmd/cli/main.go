@@ -263,42 +263,75 @@ Example:
 			return
 		}
 
-		// Interactive mode (wait for results and show TUI)
-		fmt.Println("Destill - CI/CD Failure Triage")
-		fmt.Println("===============================")
-		fmt.Printf("Build URL: %s\n", buildURL)
-		fmt.Println()
-		fmt.Println("📥 Fetching build metadata and job logs...")
-		fmt.Println("🔍 Analyzing logs for failures...")
-		fmt.Println("⏳ Waiting for pipeline to complete (10 seconds)...")
-		fmt.Println()
+		// Check for cache flag
+		cacheFile, _ := cmd.Flags().GetString("cache")
+		var groupedCards []contracts.TriageCard
 
-		// Collect triage cards from the pipeline
-		cards := collectTriageCards(10 * time.Second)
-
-		if len(cards) == 0 {
-			fmt.Println("✅ No failures detected in this build!")
-			fmt.Println()
-			return
+		if cacheFile != "" {
+			// Try to load from cache
+			if data, err := os.ReadFile(cacheFile); err == nil {
+				if err := json.Unmarshal(data, &groupedCards); err == nil {
+					fmt.Printf("📂 Loaded %d cards from cache: %s\n", len(groupedCards), cacheFile)
+				}
+			}
 		}
 
-		fmt.Printf("📊 Found %d failure(s). Launching TUI...\n", len(cards))
-		fmt.Println()
+		if len(groupedCards) == 0 {
+			// Interactive mode (wait for results and show TUI)
+			fmt.Println("Destill - CI/CD Failure Triage")
+			fmt.Println("===============================")
+			fmt.Printf("Build URL: %s\n", buildURL)
+			fmt.Println()
+			fmt.Println("📥 Fetching build metadata and job logs...")
+			fmt.Println("🔍 Analyzing logs for failures...")
+			fmt.Println("⏳ Waiting for pipeline to complete (10 seconds)...")
+			fmt.Println()
 
-		// Group cards by message hash to reduce noise
-		groupedCards := groupCardsByHash(cards)
-		fmt.Printf("📊 Grouped into %d unique failure types. Launching TUI...\n", len(groupedCards))
-		fmt.Println()
+			// Collect triage cards from the pipeline
+			cards := collectTriageCards(10 * time.Second)
 
-		// Sort grouped cards by confidence score (descending), then by recurrence count
-		sort.Slice(groupedCards, func(i, j int) bool {
-			if groupedCards[i].ConfidenceScore != groupedCards[j].ConfidenceScore {
-				return groupedCards[i].ConfidenceScore > groupedCards[j].ConfidenceScore
+			if len(cards) == 0 {
+				fmt.Println("✅ No failures detected in this build!")
+				fmt.Println()
+				return
 			}
-			countI := getRecurrenceCount(groupedCards[i])
-			countJ := getRecurrenceCount(groupedCards[j])
-			return countI > countJ
-		})
+
+			fmt.Printf("📊 Found %d failure(s). Launching TUI...\n", len(cards))
+			fmt.Println()
+
+			// Group cards by message hash to reduce noise
+			groupedCards = groupCardsByHash(cards)
+			fmt.Printf("📊 Grouped into %d unique failure types. Launching TUI...\n", len(groupedCards))
+			fmt.Println()
+
+			// Sort grouped cards by confidence score (descending), then by recurrence count
+			sort.Slice(groupedCards, func(i, j int) bool {
+				if groupedCards[i].ConfidenceScore != groupedCards[j].ConfidenceScore {
+					return groupedCards[i].ConfidenceScore > groupedCards[j].ConfidenceScore
+				}
+				countI := getRecurrenceCount(groupedCards[i])
+				countJ := getRecurrenceCount(groupedCards[j])
+				return countI > countJ
+			})
+
+			// Save to cache if requested
+			if cacheFile != "" {
+				if data, err := json.MarshalIndent(groupedCards, "", "  "); err == nil {
+					if err := os.WriteFile(cacheFile, data, 0644); err == nil {
+						fmt.Printf("💾 Saved %d cards to cache: %s\n", len(groupedCards), cacheFile)
+					}
+				}
+			}
+		}
+
+		// Debug: print first card's message info
+		if len(groupedCards) > 0 {
+			card := groupedCards[0]
+			fmt.Printf("DEBUG: First card Message length: %d\n", len(card.Message))
+			fmt.Printf("DEBUG: First card Message (first 100 chars): %.100s\n", card.Message)
+			fmt.Printf("DEBUG: First card PreContext length: %d\n", len(card.PreContext))
+			fmt.Printf("DEBUG: First card PostContext length: %d\n", len(card.PostContext))
+		}
 
 		// Brief pause to ensure any remaining log output completes before TUI starts
 		time.Sleep(500 * time.Millisecond)
@@ -355,6 +388,8 @@ func init() {
 
 	// Add --wait flag to build command
 	buildCmd.Flags().BoolP("wait", "w", false, "Wait for pipeline to complete and launch TUI (required for in-memory broker)")
+	// Add --cache flag for faster iteration during development
+	buildCmd.Flags().StringP("cache", "c", "", "Cache file path to save/load triage cards (speeds up iteration)")
 }
 
 func main() {

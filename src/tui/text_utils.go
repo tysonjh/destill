@@ -1,12 +1,42 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 )
+
+var (
+	// APC sequences: ESC _ <content> BEL or ESC _ <content> ST
+	// Used by Buildkite for timestamps: \x1b_bk;t=1234567890\x07
+	apcPattern = regexp.MustCompile("\x1b_[^\x07\x1b]*[\x07]|\x1b_[^\x1b]*\x1b\\\\")
+
+	// OSC sequences: ESC ] <content> BEL or ESC ] <content> ST
+	oscPattern = regexp.MustCompile("\x1b\\][^\x07\x1b]*[\x07]|\x1b\\][^\x1b]*\x1b\\\\")
+)
+
+// CleanLogText removes Buildkite escape sequences and normalizes line endings
+// This should be called on raw log content before processing
+func CleanLogText(s string) string {
+	// Remove APC sequences (Buildkite timestamps)
+	s = apcPattern.ReplaceAllString(s, "")
+
+	// Remove OSC sequences
+	s = oscPattern.ReplaceAllString(s, "")
+
+	// Strip standard ANSI escape codes
+	s = ansi.Strip(s)
+
+	// Normalize line endings: \r\r\n -> \n, \r\n -> \n, \r -> \n
+	s = strings.ReplaceAll(s, "\r\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+
+	return s
+}
 
 // VisualWidth returns the display width of text, accounting for multi-byte characters
 // and stripping ANSI escape codes for accurate calculation.
@@ -28,7 +58,7 @@ func Truncate(s string, maxLen int, ellipsis bool) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	s = strings.ReplaceAll(s, "\t", " ")
 	s = strings.TrimSpace(s)
-	
+
 	// Strip ANSI to ensure we don't truncate in the middle of an escape sequence
 	// and to guarantee the resulting visual width matches expectation.
 	s = StripAnsi(s)

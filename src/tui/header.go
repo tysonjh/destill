@@ -130,10 +130,9 @@ func (h Header) Render(width int) string {
 	// Combine sections
 	leftSection := lipgloss.JoinHorizontal(lipgloss.Left, status, filter, search)
 
-	// Create header bar with background
+	// Create header bar - no background to ensure visibility on any terminal
 	// Note: BorderBottom adds 2 chars (left and right corners), so content width is width - 2
 	headerStyle := lipgloss.NewStyle().
-		Background(h.styles.DarkBackground).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderBottom(true).
 		BorderForeground(h.styles.BorderColor).

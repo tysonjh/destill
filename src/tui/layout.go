@@ -17,8 +17,8 @@ func (m MainModel) View() string {
 	headerHeight := lipgloss.Height(header)
 
 	// Calculate available height for panels
-	// Account for: header + help line + list panel header row
-	availableHeight := m.height - headerHeight - 1 - 1
+	// Account for: header (2) + help line (1) + panel column header row (1) + panel borders (2)
+	availableHeight := m.height - headerHeight - 1 - 1 - 2
 
 	// Two-panel layout: Triage List (40%) | Context Detail (60%)
 	// The lipgloss JoinHorizontal function handles the space.
@@ -66,8 +66,8 @@ func (m MainModel) renderHelpText() string {
 // resizeComponents handles window resize events
 func (m *MainModel) resizeComponents() {
 	headerHeight := lipgloss.Height(m.header.Render(m.width))
-	// Account for: header + help line + list panel header row
-	availableHeight := m.height - headerHeight - 1 - 1
+	// Account for: header (2) + help line (1) + panel column header row (1) + panel borders (2)
+	availableHeight := m.height - headerHeight - 1 - 1 - 2
 
 	// Calculate panel dimensions
 	contentWidth := m.width

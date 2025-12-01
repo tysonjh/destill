@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -64,6 +65,34 @@ func (d Delegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	return nil
 }
 
+// getSnippetText returns the best text to show in the list snippet.
+// It prefers Message, but falls back to PreContext or PostContext if Message is empty.
+func getSnippetText(entry Item) string {
+	// Try Message first - clean Buildkite escape sequences and check if meaningful
+	cleanMsg := CleanLogText(entry.Card.Message)
+	if strings.TrimSpace(cleanMsg) != "" {
+		return cleanMsg
+	}
+
+	// Fall back to first non-empty line of PreContext
+	for _, line := range entry.GetPreContext() {
+		cleanLine := CleanLogText(line)
+		if strings.TrimSpace(cleanLine) != "" {
+			return cleanLine
+		}
+	}
+
+	// Fall back to first non-empty line of PostContext
+	for _, line := range entry.GetPostContext() {
+		cleanLine := CleanLogText(line)
+		if strings.TrimSpace(cleanLine) != "" {
+			return cleanLine
+		}
+	}
+
+	return ""
+}
+
 // Render renders a list item
 func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	entry, ok := item.(Item)
@@ -92,7 +121,9 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 
 	var snippet string
 	if availableWidth > 0 {
-		snippet = TruncateAndPad(entry.Card.Message, availableWidth, true)
+		// Get snippet text - use Message, or fall back to PreContext/PostContext
+		snippetText := getSnippetText(entry)
+		snippet = TruncateAndPad(snippetText, availableWidth, true)
 	}
 
 	line := fmt.Sprintf("%s │ %s │ %s │ %s │ %s",
