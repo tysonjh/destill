@@ -55,7 +55,9 @@ func TestMainModel_LongLineWrapping(t *testing.T) {
 
 	// Verify detail viewport was set up with correct width
 	// Right panel is 60% = 60, minus border (4) = 56
-	expectedViewportWidth := 56
+	// Actually, Width(60) with border includes the border in the total width.
+	// So inner content is 60 - 2 = 58.
+	expectedViewportWidth := 58
 	if m.detailViewport.Width != expectedViewportWidth {
 		t.Errorf("viewport width incorrect: expected %d, got %d",
 			expectedViewportWidth, m.detailViewport.Width)

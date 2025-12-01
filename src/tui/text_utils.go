@@ -73,6 +73,7 @@ func Wrap(text string, width int) string {
 			}
 			result.WriteString(word)
 			lineLength = VisualWidth(word)
+			continue
 		}
 
 		// Normal word handling

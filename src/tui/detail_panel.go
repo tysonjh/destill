@@ -92,7 +92,7 @@ func (m MainModel) renderDetailPanel(width, height int) string {
 			lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(borderStyle).
-				Width(width).
+				Width(width - 2).
 				Height(height).
 				Render(m.detailViewport.View()))
 

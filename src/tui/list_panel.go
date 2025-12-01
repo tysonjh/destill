@@ -15,7 +15,7 @@ func (m MainModel) renderListPanel(width, height int) string {
 	listPanel := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.styles.BorderColor).
-		Width(width).
+		Width(width - 2).
 		Height(height).
 		Render(m.listView.Render())
 
