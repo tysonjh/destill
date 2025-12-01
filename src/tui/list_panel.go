@@ -24,12 +24,15 @@ func (m MainModel) renderListPanel(width, height int) string {
 	rankHeader := fmt.Sprintf("%*s", delegate.RankWidth, "Rk")
 	recurHeader := fmt.Sprintf("%*s", delegate.RecurWidth, "Rc")
 
+	// Truncate to width-4 to account for padding (2 chars)
+	headerText := fmt.Sprintf("%s │ Conf │ %s │ Hash  │ Message", rankHeader, recurHeader)
+	truncatedHeaderText := Truncate(headerText, width-4, true)
 	headerRow := lipgloss.NewStyle().
 		Foreground(m.styles.PrimaryBlue).
 		Bold(true).
 		Width(width-2).
 		Padding(0, 1).
-		Render(fmt.Sprintf("%s │ Conf │ %s │ Hash  │ Message", rankHeader, recurHeader))
+		Render(truncatedHeaderText)
 
 	return lipgloss.JoinVertical(lipgloss.Left, headerRow, listPanel)
 }

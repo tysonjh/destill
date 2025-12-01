@@ -76,12 +76,15 @@ func (m *MainModel) updateDetailContent(item Item) {
 func (m MainModel) renderDetailPanel(width, height int) string {
 	if selectedItem, ok := m.listView.GetSelectedItem(); ok {
 		// Add header row with job name
+		// Truncate to width-4 to account for padding (2 chars)
+		jobText := fmt.Sprintf("Job: %s", selectedItem.Card.JobName)
+		truncatedJobText := Truncate(jobText, width-4, true)
 		headerRow := lipgloss.NewStyle().
 			Foreground(m.styles.PrimaryBlue).
 			Bold(true).
 			Width(width-2).
 			Padding(0, 1).
-			Render(fmt.Sprintf("Job: %s", selectedItem.Card.JobName))
+			Render(truncatedJobText)
 
 		// Show viewport content
 		borderStyle := m.styles.BorderColor
