@@ -4,6 +4,34 @@ import (
 	"strings"
 )
 
+// itemMatchesQuery checks if an item matches the search query.
+// Searches in message, job name, hash, severity, and context lines.
+func itemMatchesQuery(item Item, query string) bool {
+	// Search in primary fields
+	if strings.Contains(strings.ToLower(item.Card.Message), query) ||
+		strings.Contains(strings.ToLower(item.Card.JobName), query) ||
+		strings.Contains(strings.ToLower(item.Card.MessageHash), query) ||
+		strings.Contains(strings.ToLower(item.Card.Severity), query) {
+		return true
+	}
+
+	// Search in PreContext
+	for _, line := range item.GetPreContext() {
+		if strings.Contains(strings.ToLower(line), query) {
+			return true
+		}
+	}
+
+	// Search in PostContext
+	for _, line := range item.GetPostContext() {
+		if strings.Contains(strings.ToLower(line), query) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // applyFilter filters items based on job filter and search query
 func (m *MainModel) applyFilter() {
 	filter := m.header.GetFilter()
@@ -22,32 +50,12 @@ func (m *MainModel) applyFilter() {
 
 	// 2. Filter by Search Query
 	if m.searchQuery != "" {
-		var searchFiltered []Item
 		query := strings.ToLower(m.searchQuery)
+		var searchFiltered []Item
 		for _, item := range filtered {
-			// Search in message, job name, hash, severity
-			if strings.Contains(strings.ToLower(item.Card.Message), query) ||
-				strings.Contains(strings.ToLower(item.Card.JobName), query) ||
-				strings.Contains(strings.ToLower(item.Card.MessageHash), query) ||
-				strings.Contains(strings.ToLower(item.Card.Severity), query) {
+			if itemMatchesQuery(item, query) {
 				searchFiltered = append(searchFiltered, item)
-				continue
 			}
-			// Search in PreContext
-			for _, line := range item.GetPreContext() {
-				if strings.Contains(strings.ToLower(line), query) {
-					searchFiltered = append(searchFiltered, item)
-					goto nextItem
-				}
-			}
-			// Search in PostContext
-			for _, line := range item.GetPostContext() {
-				if strings.Contains(strings.ToLower(line), query) {
-					searchFiltered = append(searchFiltered, item)
-					goto nextItem
-				}
-			}
-		nextItem:
 		}
 		filtered = searchFiltered
 	}
