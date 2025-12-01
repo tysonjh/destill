@@ -2,7 +2,6 @@ package tui
 
 import (
 	"strconv"
-	"strings"
 
 	"destill-agent/src/contracts"
 )
@@ -35,15 +34,9 @@ func (i Item) GetRecurrence() int {
 }
 
 func (i Item) GetPreContext() []string {
-	if i.Card.PreContext == "" {
-		return []string{}
-	}
-	return strings.Split(i.Card.PreContext, "\n")
+	return SplitLines(i.Card.PreContext)
 }
 
 func (i Item) GetPostContext() []string {
-	if i.Card.PostContext == "" {
-		return []string{}
-	}
-	return strings.Split(i.Card.PostContext, "\n")
+	return SplitLines(i.Card.PostContext)
 }

@@ -355,43 +355,7 @@ func (m MainModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainContent, help)
 }
 
-// wrapText wraps text to the specified width, breaking on word boundaries when possible
-func wrapText(text string, width int) string {
-	if width <= 0 {
-		return text
-	}
-
-	var result strings.Builder
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return text
-	}
-
-	lineLength := 0
-	for _, word := range words {
-		wordLen := len(word)
-
-		// If this is the first word on the line, add it regardless of length
-		if lineLength == 0 {
-			result.WriteString(word)
-			lineLength = wordLen
-		} else if lineLength+1+wordLen <= width {
-			// Word fits on current line
-			result.WriteString(" ")
-			result.WriteString(word)
-			lineLength += 1 + wordLen
-		} else {
-			// Word doesn't fit, start new line
-			result.WriteString("\n")
-			result.WriteString(word)
-			lineLength = wordLen
-		}
-	}
-
-	return result.String()
-}
-
-func (m MainModel) renderDetail(item Item) string {
+func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	content := strings.Builder{}
 
 	// Detail Header
@@ -410,18 +374,23 @@ func (m MainModel) renderDetail(item Item) string {
 		fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Bold(true).Render("Pre-Context:"))
 		for _, line := range preContext {
 			if strings.TrimSpace(line) != "" {
-				fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(line))
+				// Wrap line before styling
+				wrapped := Wrap(line, maxWidth)
+				fmt.Fprint(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(wrapped))
+				fmt.Fprintln(&content)
 			}
 		}
 		fmt.Fprintln(&content, "")
 	}
 
-	// Error Message (Highlight)
+	// Error Message (Highlight) - wrap before styling
 	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render("ERROR:"))
-	fmt.Fprintln(&content, lipgloss.NewStyle().
+	wrappedError := Wrap(item.Card.Message, maxWidth)
+	fmt.Fprint(&content, lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#FF0000")).
 		Background(lipgloss.Color("#2D0000")).
-		Render(item.Card.Message))
+		Render(wrappedError))
+	fmt.Fprintln(&content, "")
 	fmt.Fprintln(&content, "")
 
 	// Post-context
@@ -430,7 +399,10 @@ func (m MainModel) renderDetail(item Item) string {
 		fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Bold(true).Render("Post-Context:"))
 		for _, line := range postContext {
 			if strings.TrimSpace(line) != "" {
-				fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(line))
+				// Wrap line before styling
+				wrapped := Wrap(line, maxWidth)
+				fmt.Fprint(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(wrapped))
+				fmt.Fprintln(&content)
 			}
 		}
 	}
@@ -443,14 +415,6 @@ func (m *MainModel) updateDetailContent(item Item) {
 	rightPanelWidth := m.width - int(float64(m.width)*0.4)
 	// Account for borders and padding in the viewport
 	maxWidth := rightPanelWidth - 6
-	content := m.renderDetail(item)
-
-	// Wrap long lines to fit viewport width
-	var wrappedContent strings.Builder
-	for _, line := range strings.Split(content, "\n") {
-		wrappedContent.WriteString(wrapText(line, maxWidth))
-		wrappedContent.WriteString("\n")
-	}
-
-	m.detailViewport.SetContent(wrappedContent.String())
+	content := m.renderDetail(item, maxWidth)
+	m.detailViewport.SetContent(content)
 }

@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,17 +80,18 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	rankCol := fmt.Sprintf(rankFmt, entry.Rank)                                         // dynamic width, right aligned
 	confCol := fmt.Sprintf("%-3s", fmt.Sprintf("%.2f", entry.Card.ConfidenceScore)[1:]) // 4 chars, left aligned, decimal point on left (.95)
 	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence())                            // dynamic width, right aligned
-	hashCol := truncateNoEllipsis(entry.Card.MessageHash, 5)                            // First 5 chars, no dots
+	hashCol := TruncateAndPad(entry.Card.MessageHash, 5, false)                         // First 5 chars, no ellipsis
 
 	// Calculate available width for snippet
 	// Separators: " │ " (3 chars) * 4 = 12 chars
 	// Columns: rankWidth + 3 (conf) + recurWidth + 5 (hash)
+	// List has internal padding of 2 chars on each side (4 total)
 	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 5 + 12
-	availableWidth := m.Width() - fixedWidth
+	availableWidth := m.Width() - fixedWidth - 4
 
 	var snippet string
 	if availableWidth > 0 {
-		snippet = truncateString(entry.Card.Message, availableWidth)
+		snippet = TruncateAndPad(entry.Card.Message, availableWidth, true)
 	}
 
 	line := fmt.Sprintf("%s │ %s │ %s │ %s │ %s",
@@ -103,30 +103,4 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	}
 
 	fmt.Fprint(w, style.Render(line))
-}
-
-// truncateString truncates a string to maxLen with ellipsis
-func truncateString(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if maxLen <= 0 {
-		return ""
-	}
-	if len(s) > maxLen {
-		if maxLen > 3 {
-			return s[:maxLen-3] + "..."
-		}
-		return s[:maxLen]
-	}
-	// Pad to maxLen
-	return s + strings.Repeat(" ", maxLen-len(s))
-}
-
-// truncateNoEllipsis truncates a string to maxLen without ellipsis, just cuts it
-func truncateNoEllipsis(s string, maxLen int) string {
-	s = strings.TrimSpace(s)
-	if len(s) > maxLen {
-		return s[:maxLen]
-	}
-	// Pad to maxLen
-	return s + strings.Repeat(" ", maxLen-len(s))
 }

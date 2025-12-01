@@ -103,13 +103,13 @@ FAIL: TestUserProfile_Fetch (0.02s)`,
 			},
 		},
 
-		// 4. Linting - Deprecation Warning
+		// 4. Linting - Deprecation Warning with very long line
 		{
 			ID:              "card-004",
 			Source:          "buildkite",
 			JobName:         "lint-check",
 			Severity:        "WARN",
-			Message:         "DeprecationWarning: 'ioutil.ReadAll' is deprecated, use 'io.ReadAll' instead",
+			Message:         "DeprecationWarning: 'ioutil.ReadAll' is deprecated in file /home/runner/work/myproject/myproject/src/internal/services/data/processing/v2/handlers/importers/legacy/converter/json_parser_with_validation_and_schema_enforcement.go:245:67, use 'io.ReadAll' instead (affects 127 other files across the codebase)",
 			MessageHash:     "abcdefabcdefabcdefabcdefabcdefab",
 			ConfidenceScore: 0.75,
 			PreContext: `checking src/utils/file.go... OK
@@ -217,7 +217,7 @@ KeyError: 'customer_id'`,
 			Source:          "buildkite",
 			JobName:         "job-long-context",
 			Severity:        "ERROR",
-			Message:         "RuntimeError: Failed to process large batch job after extensive processing pipeline",
+			Message:         "bk;t=[2025-11-30T15:32:45.123Z]%0|1732983165.701|fatal|rdkafka#consumer-1| [thrd:main]: rdkafka#consumer-1: Fatal error: Local: Broker transport failure: ssl://kafka-prod-03.example.com:9093/3: SSL handshake failed: error:14094410:SSL routines:ssl3_read_bytes:sslv3 alert handshake failure: Connection to broker lost during message consumption (after 45000ms, 15 retries)",
 			MessageHash:     "aabbccdd11223344556677889900eeff",
 			ConfidenceScore: 0.94,
 			PreContext: `[2025-11-30 10:15:23] INFO: Pipeline Stage 1/10: Data Ingestion Started
