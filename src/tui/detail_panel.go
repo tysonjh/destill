@@ -79,6 +79,7 @@ func (m MainModel) renderDetailPanel(width, height int) string {
 		headerRow := lipgloss.NewStyle().
 			Foreground(m.styles.PrimaryBlue).
 			Bold(true).
+			Width(width-2).
 			Padding(0, 1).
 			Render(fmt.Sprintf("Job: %s", selectedItem.Card.JobName))
 
@@ -92,7 +93,7 @@ func (m MainModel) renderDetailPanel(width, height int) string {
 			lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(borderStyle).
-				Width(width - 2).
+				Width(width-2).
 				Height(height).
 				Render(m.detailViewport.View()))
 
@@ -102,6 +103,7 @@ func (m MainModel) renderDetailPanel(width, height int) string {
 	// No selection - show empty state
 	placeholderRow := lipgloss.NewStyle().
 		Foreground(m.styles.TextSecondary).
+		Width(width - 2).
 		Padding(0, 1).
 		Render(" ")
 

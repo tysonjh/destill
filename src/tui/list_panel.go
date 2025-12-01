@@ -27,6 +27,7 @@ func (m MainModel) renderListPanel(width, height int) string {
 	headerRow := lipgloss.NewStyle().
 		Foreground(m.styles.PrimaryBlue).
 		Bold(true).
+		Width(width-2).
 		Padding(0, 1).
 		Render(fmt.Sprintf("%s │ Conf │ %s │ Hash  │ Message", rankHeader, recurHeader))
 

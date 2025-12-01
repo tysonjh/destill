@@ -131,15 +131,16 @@ func (h Header) Render(width int) string {
 	leftSection := lipgloss.JoinHorizontal(lipgloss.Left, status, filter, search)
 
 	// Create header bar with background
+	// Note: BorderBottom adds 2 chars (left and right corners), so content width is width - 2
 	headerStyle := lipgloss.NewStyle().
 		Background(h.styles.DarkBackground).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderBottom(true).
 		BorderForeground(h.styles.BorderColor).
-		Width(width)
+		Width(width - 2)
 
 	// Space out left and right sections
-	spacer := lipgloss.NewStyle().Width(width - lipgloss.Width(leftSection)).Render("")
+	spacer := lipgloss.NewStyle().Width(width - 2 - lipgloss.Width(leftSection)).Render("")
 
 	content := lipgloss.JoinHorizontal(lipgloss.Left, leftSection, spacer)
 

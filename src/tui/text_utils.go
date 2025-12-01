@@ -1,14 +1,12 @@
 package tui
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 )
-
-var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // VisualWidth returns the display width of text, accounting for multi-byte characters
 // and stripping ANSI escape codes for accurate calculation.
@@ -18,7 +16,7 @@ func VisualWidth(s string) int {
 
 // StripAnsi removes ANSI escape codes from the string
 func StripAnsi(s string) string {
-	return ansiRegex.ReplaceAllString(s, "")
+	return ansi.Strip(s)
 }
 
 // Truncate truncates text to maxLen characters (visual width) with optional ellipsis.
