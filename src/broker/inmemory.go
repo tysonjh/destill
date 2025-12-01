@@ -51,7 +51,9 @@ func (b *InMemoryBroker) Publish(topic string, message []byte) error {
 			default:
 				// Channel buffer full - log warning but continue
 				// This is acceptable for local development; production would use backpressure
-				fmt.Printf("[InMemoryBroker] Warning: channel buffer full for topic '%s', message dropped\n", topic)
+				if b.verbose {
+					fmt.Printf("[InMemoryBroker] Warning: channel buffer full for topic '%s', message dropped\n", topic)
+				}
 			}
 		}
 	}
