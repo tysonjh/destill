@@ -54,7 +54,7 @@ func TestMainModel_Initialization(t *testing.T) {
 	if len(model.items) != 1 {
 		t.Errorf("expected 1 item, got %d", len(model.items))
 	}
-	
+
 	// Check header jobs
 	if len(model.header.availableJobs) != 1 {
 		t.Errorf("expected 1 available job, got %d", len(model.header.availableJobs))
@@ -75,10 +75,10 @@ func TestMainModel_Update_Resize(t *testing.T) {
 	if m.height != 40 {
 		t.Errorf("expected height 40, got %d", m.height)
 	}
-	
+
 	// Check list view size logic (1/3 of available)
 	// Header=3, Footer=1. Available = 36. List = 12.
-	// Note: We can't easily check inner list size without exposing it, 
+	// Note: We can't easily check inner list size without exposing it,
 	// but we can ensure no panic and state update.
 }
 
@@ -139,7 +139,7 @@ func TestMainModel_View(t *testing.T) {
 	}
 
 	model := createTestModel(cards)
-	
+
 	// Initialize size
 	updatedModel, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	m := updatedModel.(MainModel)
