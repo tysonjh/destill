@@ -8,7 +8,7 @@ import (
 	"destill-agent/src/contracts"
 )
 
-func TestNewTriageModel(t *testing.T) {
+func Test_newTriageModel(t *testing.T) {
 	cards := []contracts.TriageCard{
 		{
 			ID:              "card-1",
@@ -24,7 +24,7 @@ func TestNewTriageModel(t *testing.T) {
 		},
 	}
 
-	model := NewTriageModel(cards)
+	model := newTriageModel(cards)
 
 	if len(model.cards) != 1 {
 		t.Errorf("expected 1 card, got %d", len(model.cards))
@@ -36,15 +36,20 @@ func TestNewTriageModel(t *testing.T) {
 }
 
 func TestTriageModel_EmptyCards(t *testing.T) {
-	model := NewTriageModel([]contracts.TriageCard{})
+	model := newTriageModel([]contracts.TriageCard{})
+
+	// Set window size to ensure View doesn't return "Initializing..."
+	updatedModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updatedModel.(TriageModel)
 
 	view := model.View()
 	if view == "" {
 		t.Error("expected non-empty view for empty cards")
 	}
 
-	if view != "\nNo failures detected or analyzed.\n\n" {
-		t.Errorf("expected empty message, got: %s", view)
+	expected := "No failures detected or analyzed.\n"
+	if view != expected {
+		t.Errorf("expected empty message:\n%q\ngot:\n%q", expected, view)
 	}
 }
 
@@ -55,7 +60,7 @@ func TestTriageModel_Navigation(t *testing.T) {
 		{MessageHash: "hash3", Message: "Error 3", ConfidenceScore: 0.7},
 	}
 
-	model := NewTriageModel(cards)
+	model := newTriageModel(cards)
 
 	// Test down navigation
 	updatedModel, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
@@ -116,7 +121,12 @@ func TestTriageModel_View(t *testing.T) {
 		},
 	}
 
-	model := NewTriageModel(cards)
+	model := newTriageModel(cards)
+
+	// Set window size to ensure View doesn't return "Initializing..."
+	updatedModel, _ := model.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	model = updatedModel.(TriageModel)
+
 	view := model.View()
 
 	// Check that view contains expected elements
@@ -136,8 +146,8 @@ func TestTriageModel_View(t *testing.T) {
 		t.Error("view should contain Hash header")
 	}
 
-	if !contains(view, "Log Snippet") {
-		t.Error("view should contain Log Snippet header")
+	if !contains(view, "Error Message") {
+		t.Error("view should contain Error Message header")
 	}
 
 	if !contains(view, "0.95") {

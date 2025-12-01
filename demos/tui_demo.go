@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"destill-agent/src/contracts"
 	"destill-agent/src/tui"
 )
@@ -96,12 +94,8 @@ func main() {
 		},
 	}
 
-	// Create TUI model
-	model := tui.NewTriageModel(cards)
-
 	// Run the TUI program
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
+	if err := tui.Start(cards); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}

@@ -71,15 +71,25 @@ type TriageModel struct {
 	terminalHeight int                    // Terminal height for split calculation
 }
 
-// NewTriageModel creates a new TriageModel with the given sorted triage cards.
+// newTriageModel creates a new TriageModel with the given sorted triage cards.
 // Cards should be pre-sorted by ConfidenceScore (descending), then by RecurrenceCount.
-func NewTriageModel(cards []contracts.TriageCard) TriageModel {
+func newTriageModel(cards []contracts.TriageCard) TriageModel {
 	return TriageModel{
 		cards:        cards,
 		cursor:       0,
 		listScroll:   0,
 		detailScroll: 0,
 	}
+}
+
+// Start initializes and runs the TUI with the provided triage cards.
+// It encapsulates the Bubble Tea program execution, keeping the implementation details
+// contained within the tui package.
+func Start(cards []contracts.TriageCard) error {
+	model := newTriageModel(cards)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	_, err := p.Run()
+	return err
 }
 
 // getListHeight calculates the list viewport height - always 1/4 of available space

@@ -9,7 +9,6 @@ import (
 	"sort"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
 	"destill-agent/src/broker"
@@ -123,10 +122,7 @@ Example:
 		})
 
 		// Launch the TUI
-		model := tui.NewTriageModel(cards)
-		p := tea.NewProgram(model, tea.WithAltScreen())
-
-		if _, err := p.Run(); err != nil {
+		if err := tui.Start(cards); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
 		}
@@ -308,10 +304,7 @@ Example:
 		time.Sleep(500 * time.Millisecond)
 
 		// Launch the TUI
-		model := tui.NewTriageModel(groupedCards)
-		p := tea.NewProgram(model, tea.WithAltScreen())
-
-		if _, err := p.Run(); err != nil {
+		if err := tui.Start(groupedCards); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
 		}
