@@ -41,6 +41,7 @@ func TruncateAndPad(s string, width int, ellipsis bool) string {
 }
 
 // Wrap wraps text to the specified width, breaking on word boundaries when possible
+// Long words that exceed width are broken mid-word
 func Wrap(text string, width int) string {
 	if width <= 0 {
 		return text
@@ -56,8 +57,52 @@ func Wrap(text string, width int) string {
 	for _, word := range words {
 		wordLen := VisualWidth(word)
 
-		// If this is the first word on the line, add it regardless of length
+		// If word is longer than width, break it mid-word
+		if wordLen > width {
+			// If there's content on current line, break to new line first
+			if lineLength > 0 {
+				result.WriteString("\n")
+				lineLength = 0
+			}
+
+			// Break the long word into chunks
+			for len(word) > 0 {
+				// Truncate to fit width and add to result
+				chunk := runewidth.Truncate(word, width, "")
+				chunkLen := VisualWidth(chunk)
+				result.WriteString(chunk)
+
+				// Remove the chunk from word using runewidth-aware slicing
+				// Count runes until we reach the visual width
+				runeCount := 0
+				currentWidth := 0
+				for _, r := range word {
+					if currentWidth >= chunkLen {
+						break
+					}
+					runeCount++
+					currentWidth += runewidth.RuneWidth(r)
+				}
+				// Slice by rune count
+				runes := []rune(word)
+				if runeCount < len(runes) {
+					word = string(runes[runeCount:])
+				} else {
+					word = ""
+				}
+
+				// Add newline if there's more to process
+				if len(word) > 0 {
+					result.WriteString("\n")
+				}
+			}
+			lineLength = 0
+			continue
+		}
+
+		// Normal word handling
 		if lineLength == 0 {
+			// First word on line
 			result.WriteString(word)
 			lineLength = wordLen
 		} else if lineLength+1+wordLen <= width {
