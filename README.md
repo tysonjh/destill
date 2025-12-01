@@ -70,6 +70,23 @@ Launch the TUI to view triage cards (requires persistent broker):
 ./destill analyze
 ```
 
+## Demos
+
+You can run a standalone demo of the TUI with simulated data to see the interface in action without connecting to Buildkite.
+
+```bash
+# Build the demo
+go build -o demo ./demos/tui_demo.go
+
+# Run it
+./demo
+```
+
+This is useful for:
+- Testing the UI layout and interaction
+- Developing new UI features locally
+- Verifying terminal compatibility
+
 ## Building from Source
 
 ```bash
