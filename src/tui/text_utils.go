@@ -10,25 +10,31 @@ import (
 )
 
 var (
-	// APC sequences: ESC _ <content> BEL or ESC _ <content> ST
-	// Used by Buildkite for timestamps: \x1b_bk;t=1234567890\x07
-	apcPattern = regexp.MustCompile("\x1b_[^\x07\x1b]*[\x07]|\x1b_[^\x1b]*\x1b\\\\")
+	// C1 control sequences that wrap content until BEL or ST (String Terminator)
+	// Covers: APC (ESC _), OSC (ESC ]), DCS (ESC P), PM (ESC ^), SOS (ESC X)
+	// These are terminated by BEL (\x07) or ST (ESC \)
+	// Common sources: Buildkite timestamps, terminal titles, iTerm2 integrations, etc.
+	c1SequencePattern = regexp.MustCompile("\x1b[_\\]P^X][^\x07\x1b]*(?:\x07|\x1b\\\\)")
 
-	// OSC sequences: ESC ] <content> BEL or ESC ] <content> ST
-	oscPattern = regexp.MustCompile("\x1b\\][^\x07\x1b]*[\x07]|\x1b\\][^\x1b]*\x1b\\\\")
+	// C0 control characters (except tab, newline, carriage return which we handle separately)
+	// Includes: NUL, SOH, STX, ETX, EOT, ENQ, ACK, BEL, BS, VT, FF, SO, SI, DLE, DC1-4, NAK, SYN, ETB, CAN, EM, SUB, ESC, FS, GS, RS, US
+	c0ControlPattern = regexp.MustCompile("[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f]")
 )
 
-// CleanLogText removes Buildkite escape sequences and normalizes line endings
-// This should be called on raw log content before processing
+// CleanLogText removes terminal escape sequences and normalizes line endings
+// This comprehensively strips C1 control sequences (APC, OSC, DCS, PM, SOS),
+// C0 control characters, standard ANSI codes, and normalizes line endings.
+// Should be called on raw log content before processing for display.
 func CleanLogText(s string) string {
-	// Remove APC sequences (Buildkite timestamps)
-	s = apcPattern.ReplaceAllString(s, "")
+	// Remove C1 control sequences (APC, OSC, DCS, PM, SOS)
+	// These wrap content and are used by terminals for metadata, timestamps, etc.
+	s = c1SequencePattern.ReplaceAllString(s, "")
 
-	// Remove OSC sequences
-	s = oscPattern.ReplaceAllString(s, "")
-
-	// Strip standard ANSI escape codes
+	// Strip standard ANSI/CSI escape codes (colors, cursor movement, etc.)
 	s = ansi.Strip(s)
+
+	// Remove remaining C0 control characters (except \t, \n, \r)
+	s = c0ControlPattern.ReplaceAllString(s, "")
 
 	// Normalize line endings: \r\r\n -> \n, \r\n -> \n, \r -> \n
 	s = strings.ReplaceAll(s, "\r\r\n", "\n")

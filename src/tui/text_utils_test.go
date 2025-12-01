@@ -150,3 +150,101 @@ func TestTruncateAndPad(t *testing.T) {
 		t.Errorf("expected width %d, got %d for '%s'", width, resultWidth, result)
 	}
 }
+
+func TestCleanLogText_BuildkiteAPC(t *testing.T) {
+	// Buildkite timestamp APC sequence: ESC _ bk;t=timestamp BEL
+	input := "\x1b_bk;t=1732983165\x07%0|1732983165.701|fatal|rdkafka#producer-5|error message"
+	expected := "%0|1732983165.701|fatal|rdkafka#producer-5|error message"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("Buildkite APC not stripped\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
+
+func TestCleanLogText_OSC(t *testing.T) {
+	// OSC sequence for terminal title: ESC ] 0;title BEL
+	input := "\x1b]0;Build Output\x07This is the actual content"
+	expected := "This is the actual content"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("OSC not stripped\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
+
+func TestCleanLogText_DCS(t *testing.T) {
+	// DCS sequence: ESC P ... ST (ESC \)
+	input := "\x1bPsome device control\x1b\\actual content"
+	expected := "actual content"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("DCS not stripped\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
+
+func TestCleanLogText_ANSI(t *testing.T) {
+	// Standard ANSI color codes
+	input := "\x1b[31mRed text\x1b[0m normal"
+	expected := "Red text normal"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("ANSI codes not stripped\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
+
+func TestCleanLogText_LineEndings(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"CRLF", "line1\r\nline2", "line1\nline2"},
+		{"CR", "line1\rline2", "line1\nline2"},
+		{"Double CR LF", "line1\r\r\nline2", "line1\nline2"},
+		{"Mixed", "a\r\nb\rc\r\r\nd", "a\nb\nc\nd"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CleanLogText(tt.input)
+			if result != tt.expected {
+				t.Errorf("line endings not normalized\nexpected: %q\ngot:      %q", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestCleanLogText_C0Controls(t *testing.T) {
+	// C0 control characters (NUL, BEL standalone, etc.)
+	input := "text\x00with\x07bell\x08and\x1fcontrols"
+	expected := "textwithbellandcontrols"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("C0 controls not stripped\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
+
+func TestCleanLogText_PreservesTabsAndNewlines(t *testing.T) {
+	input := "line1\n\tindented line2"
+	expected := "line1\n\tindented line2"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("tabs/newlines incorrectly modified\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
+
+func TestCleanLogText_Complex(t *testing.T) {
+	// Simulates real Buildkite log line
+	input := "\x1b_bk;t=1732983165\x07\x1b[31m%0|1732983165.701|fatal|rdkafka#producer-5|\x1b[0m error\r\r\n"
+	expected := "%0|1732983165.701|fatal|rdkafka#producer-5| error\n"
+
+	result := CleanLogText(input)
+	if result != expected {
+		t.Errorf("complex log not cleaned properly\nexpected: %q\ngot:      %q", expected, result)
+	}
+}
