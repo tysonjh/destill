@@ -80,6 +80,11 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.resizeComponents()
 
+		// Initialize detail content with first item on first render
+		if selectedItem, ok := m.listView.GetSelectedItem(); ok {
+			m.updateDetailContent(selectedItem)
+		}
+
 	case tea.KeyMsg:
 		// Handle search mode input
 		if m.searchMode {
