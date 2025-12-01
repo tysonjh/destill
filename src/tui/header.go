@@ -31,11 +31,6 @@ func NewHeaderWithStyles(projectStatus string, availableJobs []string, styles *S
 	return h
 }
 
-// SetFilter sets the current filter
-func (h *Header) SetFilter(filter string) {
-	h.selectedFilter = filter
-}
-
 // GetFilter returns the current filter name (unformatted)
 func (h Header) GetFilter() string {
 	return h.rawFilterName
