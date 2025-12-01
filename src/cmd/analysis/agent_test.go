@@ -32,12 +32,14 @@ func TestAnalysisAgentUnmarshalsLogChunk(t *testing.T) {
 	// Give agent time to subscribe
 	time.Sleep(50 * time.Millisecond)
 
-	// Create a LogChunk
+	// Create a LogChunk with content that will score >= 0.80 confidence
+	// The agent filters logs below 0.80 confidence threshold
+	// Adding "Exception" and "stack trace" boosts confidence significantly
 	logChunk := contracts.LogChunk{
 		ID:        "chunk-test-123",
 		RequestID: "req-test-456",
 		JobName:   "unit-test-job",
-		Content:   "ERROR: Test failure message",
+		Content:   "FATAL: Exception in thread main - NullPointerException\nStack trace:\n\tat com.example.Main.run(Main.java:42)",
 		Timestamp: "2025-11-28T12:00:00Z",
 		Metadata: map[string]string{
 			"build_url": "https://example.com/build/123",
@@ -64,8 +66,10 @@ func TestAnalysisAgentUnmarshalsLogChunk(t *testing.T) {
 		}
 
 		// Verify fields are populated correctly
-		if triageCard.ID != logChunk.ID {
-			t.Errorf("ID mismatch: expected %q, got %q", logChunk.ID, triageCard.ID)
+		// Note: Agent appends "-line-N" to the ID for each error line it processes
+		expectedIDPrefix := logChunk.ID + "-line-"
+		if !strings.HasPrefix(triageCard.ID, expectedIDPrefix) {
+			t.Errorf("ID mismatch: expected prefix %q, got %q", expectedIDPrefix, triageCard.ID)
 		}
 		if triageCard.RequestID != logChunk.RequestID {
 			t.Errorf("RequestID mismatch: expected %q, got %q", logChunk.RequestID, triageCard.RequestID)
