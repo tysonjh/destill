@@ -8,9 +8,9 @@ import (
 
 // panelDimensions holds calculated layout dimensions
 type panelDimensions struct {
-	availableHeight  int
-	leftPanelWidth   int
-	rightPanelWidth  int
+	availableHeight int
+	leftPanelWidth  int
+	rightPanelWidth int
 }
 
 // calculateDimensions computes panel sizes based on terminal dimensions.
@@ -25,9 +25,9 @@ func (m MainModel) calculateDimensions() panelDimensions {
 	rightPanelWidth := m.width - leftPanelWidth
 
 	return panelDimensions{
-		availableHeight:  availableHeight,
-		leftPanelWidth:   leftPanelWidth,
-		rightPanelWidth:  rightPanelWidth,
+		availableHeight: availableHeight,
+		leftPanelWidth:  leftPanelWidth,
+		rightPanelWidth: rightPanelWidth,
 	}
 }
 

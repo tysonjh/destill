@@ -51,4 +51,3 @@ func (s *StyleConfig) HelpStyle() lipgloss.Style {
 		Foreground(s.TextSecondary).
 		Padding(0, 2)
 }
-
