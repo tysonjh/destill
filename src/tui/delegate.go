@@ -10,6 +10,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const (
+	// listRenderingOverhead accounts for padding added by bubbles/list and panel borders.
+	// Breakdown: panel border (2) + list internal padding/margins (8) = 10 chars total.
+	// This was determined empirically by measuring actual rendered output.
+	listRenderingOverhead = 10
+)
+
 // Delegate renders triage items as table rows.
 type Delegate struct {
 	RankWidth  int
@@ -112,12 +119,9 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	hashCol := TruncateAndPad(entry.Card.MessageHash, 5, false)                         // First 5 chars, no ellipsis
 
 	// Calculate available width for snippet
-	// Separators: " │ " (3 chars) * 4 = 12 chars
-	// Columns: rankWidth + 3 (conf) + recurWidth + 5 (hash)
-	// Account for list borders and padding (empirically determined: 10 chars total)
-	// This includes the panel border (2 chars) plus bubbles list internal rendering (8 chars)
+	// Fixed columns: rank + conf (3) + recurrence + hash (5) + separators (12)
 	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 5 + 12
-	availableWidth := m.Width() - fixedWidth - 10
+	availableWidth := m.Width() - fixedWidth - listRenderingOverhead
 
 	var snippet string
 	if availableWidth > 0 {
