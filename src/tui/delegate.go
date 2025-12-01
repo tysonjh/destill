@@ -85,9 +85,10 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	// Calculate available width for snippet
 	// Separators: " │ " (3 chars) * 4 = 12 chars
 	// Columns: rankWidth + 3 (conf) + recurWidth + 5 (hash)
-	// List has internal padding of 2 chars on each side (4 total)
+	// Account for list borders and padding (empirically determined: 10 chars total)
+	// This includes the panel border (2 chars) plus bubbles list internal rendering (8 chars)
 	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 5 + 12
-	availableWidth := m.Width() - fixedWidth - 4
+	availableWidth := m.Width() - fixedWidth - 10
 
 	var snippet string
 	if availableWidth > 0 {
