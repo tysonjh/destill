@@ -180,6 +180,13 @@ func (m *MainModel) resizeComponents() {
 	// Resize viewport for detail panel (accounting for borders and job header)
 	m.detailViewport.Width = rightPanelWidth - 4
 	m.detailViewport.Height = availableHeight - 4
+
+	// Initialize detail content if not already set and we have items
+	if m.detailViewport.TotalLineCount() == 0 {
+		if selectedItem, ok := m.listView.GetSelectedItem(); ok {
+			m.updateDetailContent(selectedItem)
+		}
+	}
 }
 
 func (m *MainModel) applyFilter() {
@@ -348,6 +355,42 @@ func (m MainModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainContent, help)
 }
 
+// wrapText wraps text to the specified width, breaking on word boundaries when possible
+func wrapText(text string, width int) string {
+	if width <= 0 {
+		return text
+	}
+
+	var result strings.Builder
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return text
+	}
+
+	lineLength := 0
+	for _, word := range words {
+		wordLen := len(word)
+
+		// If this is the first word on the line, add it regardless of length
+		if lineLength == 0 {
+			result.WriteString(word)
+			lineLength = wordLen
+		} else if lineLength+1+wordLen <= width {
+			// Word fits on current line
+			result.WriteString(" ")
+			result.WriteString(word)
+			lineLength += 1 + wordLen
+		} else {
+			// Word doesn't fit, start new line
+			result.WriteString("\n")
+			result.WriteString(word)
+			lineLength = wordLen
+		}
+	}
+
+	return result.String()
+}
+
 func (m MainModel) renderDetail(item Item) string {
 	content := strings.Builder{}
 
@@ -397,6 +440,17 @@ func (m MainModel) renderDetail(item Item) string {
 
 // updateDetailContent updates the viewport with content from the selected item
 func (m *MainModel) updateDetailContent(item Item) {
+	rightPanelWidth := m.width - int(float64(m.width)*0.4)
+	// Account for borders and padding in the viewport
+	maxWidth := rightPanelWidth - 6
 	content := m.renderDetail(item)
-	m.detailViewport.SetContent(content)
+
+	// Wrap long lines to fit viewport width
+	var wrappedContent strings.Builder
+	for _, line := range strings.Split(content, "\n") {
+		wrappedContent.WriteString(wrapText(line, maxWidth))
+		wrappedContent.WriteString("\n")
+	}
+
+	m.detailViewport.SetContent(wrappedContent.String())
 }
