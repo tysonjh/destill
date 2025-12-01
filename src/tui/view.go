@@ -71,7 +71,15 @@ func (v View) GetSelectedItem() (Item, bool) {
 	if len(v.list.Items()) == 0 {
 		return Item{}, false
 	}
-	return v.list.SelectedItem().(Item), true
+	selected := v.list.SelectedItem()
+	if selected == nil {
+		return Item{}, false
+	}
+	item, ok := selected.(Item)
+	if !ok {
+		return Item{}, false
+	}
+	return item, true
 }
 
 // Render returns the string representation of the view

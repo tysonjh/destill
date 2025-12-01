@@ -78,11 +78,21 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	rankFmt := fmt.Sprintf("%%%dd", d.RankWidth)   // e.g., "%3d" for 3-digit width
 	recurFmt := fmt.Sprintf("%%%dd", d.RecurWidth) // e.g., "%4d" for 4-digit width
 
-	rankCol := fmt.Sprintf(rankFmt, entry.Rank)                               // dynamic width, right aligned
+	rankCol := fmt.Sprintf(rankFmt, entry.Rank)                                         // dynamic width, right aligned
 	confCol := fmt.Sprintf("%-3s", fmt.Sprintf("%.2f", entry.Card.ConfidenceScore)[1:]) // 4 chars, left aligned, decimal point on left (.95)
-	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence())                       // dynamic width, right aligned
-	hashCol := truncateNoEllipsis(entry.Card.MessageHash, 5)                              // First 5 chars, no dots
-	snippet := truncateString(entry.Card.Message, 70)
+	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence())                            // dynamic width, right aligned
+	hashCol := truncateNoEllipsis(entry.Card.MessageHash, 5)                            // First 5 chars, no dots
+
+	// Calculate available width for snippet
+	// Separators: " │ " (3 chars) * 4 = 12 chars
+	// Columns: rankWidth + 3 (conf) + recurWidth + 5 (hash)
+	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 5 + 12
+	availableWidth := m.Width() - fixedWidth
+
+	var snippet string
+	if availableWidth > 0 {
+		snippet = truncateString(entry.Card.Message, availableWidth)
+	}
 
 	line := fmt.Sprintf("%s │ %s │ %s │ %s │ %s",
 		rankCol, confCol, recurCol, hashCol, snippet)
@@ -98,6 +108,9 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 // truncateString truncates a string to maxLen with ellipsis
 func truncateString(s string, maxLen int) string {
 	s = strings.TrimSpace(s)
+	if maxLen <= 0 {
+		return ""
+	}
 	if len(s) > maxLen {
 		if maxLen > 3 {
 			return s[:maxLen-3] + "..."

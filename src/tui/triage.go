@@ -12,12 +12,14 @@ import (
 
 // MainModel is the main Bubble Tea model for the application.
 type MainModel struct {
-	header       Header
-	listView     View
-	items        []Item
-	width        int
-	height       int
-	styles       *StyleConfig
+	header      Header
+	listView    View
+	items       []Item
+	width       int
+	height      int
+	styles      *StyleConfig
+	searchMode  bool
+	searchQuery string
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -75,12 +77,51 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeComponents()
 
 	case tea.KeyMsg:
+		// Handle search mode input
+		if m.searchMode {
+			switch msg.String() {
+			case "esc":
+				m.searchMode = false
+				m.searchQuery = ""
+				m.header.SetSearch(m.searchQuery, m.searchMode)
+				m.applyFilter()
+				return m, nil
+			case "enter":
+				m.searchMode = false
+				m.header.SetSearch(m.searchQuery, m.searchMode)
+				m.applyFilter()
+				return m, nil
+			case "backspace":
+				if len(m.searchQuery) > 0 {
+					m.searchQuery = m.searchQuery[:len(m.searchQuery)-1]
+					m.header.SetSearch(m.searchQuery, m.searchMode)
+					m.applyFilter()
+				}
+				return m, nil
+			default:
+				// Add character to search query if it's a single rune
+				if len(msg.String()) == 1 {
+					m.searchQuery += msg.String()
+					m.header.SetSearch(m.searchQuery, m.searchMode)
+					m.applyFilter()
+				}
+				return m, nil
+			}
+		}
+
+		// Standard navigation
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "tab":
 			m.header.CycleFilter()
 			m.applyFilter()
+			return m, nil
+		case "/":
+			m.searchMode = true
+			m.searchQuery = ""
+			m.header.SetSearch(m.searchQuery, m.searchMode)
+			return m, nil
 		}
 	}
 
@@ -92,33 +133,71 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *MainModel) resizeComponents() {
-	// Calculate heights
-	headerHeight := 3 // Approx height of header (border + padding)
+	// Calculate header height dynamically (same as in View)
+	headerView := m.header.Render(m.width)
+	headerHeight := lipgloss.Height(headerView)
 	footerHeight := 1 // Help text
-	availableHeight := m.height - headerHeight - footerHeight
 
-	// Split remaining height: 1/3 for list, 2/3 for details
-	listHeight := availableHeight / 3
-	if listHeight < 5 {
-		listHeight = 5
+	// Available height for main content
+	availableHeight := m.height - headerHeight - footerHeight
+	if availableHeight < 10 {
+		availableHeight = 10
 	}
-	
-m.listView.SetSize(m.width, listHeight)
+
+	// Left panel width (40%)
+	leftPanelWidth := int(float64(m.width) * 0.4)
+
+	// Update list size (width minus borders)
+	m.listView.SetSize(leftPanelWidth-2, availableHeight)
 }
 
 func (m *MainModel) applyFilter() {
 	filter := m.header.GetFilter()
-	if filter == "ALL" {
-		m.listView.SetItems(m.items)
-		return
-	}
 
+	// 1. Filter by Job
 	var filtered []Item
-	for _, item := range m.items {
-		if item.Card.JobName == filter {
-			filtered = append(filtered, item)
+	if filter == "ALL" {
+		filtered = m.items
+	} else {
+		for _, item := range m.items {
+			if item.Card.JobName == filter {
+				filtered = append(filtered, item)
+			}
 		}
 	}
+
+	// 2. Filter by Search Query
+	if m.searchQuery != "" {
+		var searchFiltered []Item
+		query := strings.ToLower(m.searchQuery)
+		for _, item := range filtered {
+			// Search in message, job name, hash, severity
+			if strings.Contains(strings.ToLower(item.Card.Message), query) ||
+				strings.Contains(strings.ToLower(item.Card.JobName), query) ||
+				strings.Contains(strings.ToLower(item.Card.MessageHash), query) ||
+				strings.Contains(strings.ToLower(item.Card.Severity), query) {
+				searchFiltered = append(searchFiltered, item)
+				continue
+			}
+			// Search in PreContext
+			for _, line := range item.GetPreContext() {
+				if strings.Contains(strings.ToLower(line), query) {
+					searchFiltered = append(searchFiltered, item)
+					goto nextItem
+				}
+			}
+			// Search in PostContext
+			for _, line := range item.GetPostContext() {
+				if strings.Contains(strings.ToLower(line), query) {
+					searchFiltered = append(searchFiltered, item)
+					goto nextItem
+				}
+			}
+		nextItem:
+		}
+		filtered = searchFiltered
+	}
+
 	m.listView.SetItems(filtered)
 }
 
@@ -129,79 +208,147 @@ func (m MainModel) View() string {
 
 	// 1. Header
 	headerView := m.header.Render(m.width)
+	headerHeight := lipgloss.Height(headerView)
 
-	// 2. List
-	listView := m.listView.Render()
+	// Calculate available height for main content
+	// Account for: Header + Help Footer (1 line) + some breathing room
+	// The border is included in the panel height, so don't double-count it
+	const footerHeight = 1
+	availableHeight := m.height - headerHeight - footerHeight
+	if availableHeight < 10 {
+		availableHeight = 10 // Minimum height to show something useful
+	}
 
-	// 3. Detail View
-	detailView := m.renderDetail()
+	// Two-panel layout: Triage List (40%) | Context Detail (60%)
+	leftPanelWidth := int(float64(m.width) * 0.4)
+	rightPanelWidth := m.width - leftPanelWidth
+
+	// Ensure list size is updated (redundant if resizeComponents called, but safe)
+	m.listView.SetSize(leftPanelWidth-2, availableHeight)
+
+	// Left panel: Triage list
+	leftPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.styles.BorderColor).
+		Width(leftPanelWidth).
+		Height(availableHeight).
+		Render(m.listView.Render())
+
+	// Add column headers to left panel
+	delegate := m.listView.GetDelegate()
+	rankHeader := fmt.Sprintf("%*s", delegate.RankWidth, "Rk")
+	recurHeader := fmt.Sprintf("%*s", delegate.RecurWidth, "Rc")
+
+	headerRow := lipgloss.NewStyle().
+		Foreground(m.styles.PrimaryBlue).
+		Bold(true).
+		Padding(0, 1).
+		Render(fmt.Sprintf("%s │ Conf │ %s │ Hash  │ Message", rankHeader, recurHeader))
+
+	leftPanelWithHeader := lipgloss.JoinVertical(lipgloss.Left, headerRow, leftPanel)
+
+	// Right panel: Context detail view
+	var rightPanel string
+	selectedItem, ok := m.listView.GetSelectedItem()
+
+	if ok {
+		detailContent := m.renderDetail(selectedItem, rightPanelWidth-4, availableHeight-2)
+
+		// Add placeholder header row with job name
+		jobHeaderRow := lipgloss.NewStyle().
+			Foreground(m.styles.PrimaryBlue).
+			Bold(true).
+			Padding(0, 1).
+			Render(fmt.Sprintf("Job: %s", selectedItem.Card.JobName))
+
+		detailWithHeader := lipgloss.JoinVertical(lipgloss.Left, jobHeaderRow,
+			lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(m.styles.AccentBlue).
+				Width(rightPanelWidth).
+				Height(availableHeight).
+				Render(detailContent))
+
+		rightPanel = detailWithHeader
+	} else {
+		// Placeholder when nothing selected
+		placeholderRow := lipgloss.NewStyle().
+			Foreground(m.styles.TextSecondary).
+			Padding(0, 1).
+			Render(" ")
+
+		emptyStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(m.styles.BorderColor).
+			Width(rightPanelWidth).
+			Height(availableHeight).
+			Align(lipgloss.Center, lipgloss.Center).
+			Foreground(m.styles.TextSecondary).
+			Faint(true)
+
+		rightPanel = lipgloss.JoinVertical(lipgloss.Left, placeholderRow, emptyStyle.Render("← Select a card to view details"))
+	}
+
+	// Combine panels horizontally
+	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanelWithHeader, rightPanel)
 
 	// 4. Footer
-	helpStyle := m.styles.HelpStyle()
-	footerView := helpStyle.Render("↑/↓ navigate • tab filter • q quit")
+	helpStyle := m.styles.HelpStyle().Render("↑/↓ navigate • tab filter • q quit")
 
 	// Join vertically
 	return lipgloss.JoinVertical(lipgloss.Left,
 		headerView,
-		listView,
-		detailView,
-		footerView,
+		mainContent,
+		helpStyle,
 	)
 }
 
-func (m MainModel) renderDetail() string {
-	selectedItem, ok := m.listView.GetSelectedItem()
-	if !ok {
-		return ""
-	}
-
-	// Calculate detail height
-	headerHeight := lipgloss.Height(m.header.Render(m.width))
-	listHeight := lipgloss.Height(m.listView.Render())
-	footerHeight := 1
-	detailHeight := m.height - headerHeight - listHeight - footerHeight
-
-	if detailHeight < 0 {
-		detailHeight = 0
-	}
-
+func (m MainModel) renderDetail(item Item, width, height int) string {
 	content := strings.Builder{}
 
 	// Detail Header
-	titleStyle := m.styles.TitleStyle()
-	fmt.Fprintf(&content, "%s\n\n", titleStyle.Render("Failure Details"))
+	header := lipgloss.NewStyle().
+		Foreground(m.styles.PrimaryBlue).
+		Bold(true).
+		Render(fmt.Sprintf("Hash: %s | Severity: %s | Job: %s",
+			item.Card.MessageHash,
+			item.Card.Severity,
+			item.Card.JobName))
+	fmt.Fprintf(&content, "%s\n\n", header)
 
-	// Job Name
-	jobStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.PrimaryBlue)
-	fmt.Fprintf(&content, "Job: %s\n\n", jobStyle.Render(selectedItem.Card.JobName))
-
-	// Context
-	contextStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
-	
 	// Pre-context
-	for _, line := range selectedItem.GetPreContext() {
-		if strings.TrimSpace(line) != "" {
-			fmt.Fprintln(&content, contextStyle.Render(line))
+	preContext := item.GetPreContext()
+	if len(preContext) > 0 {
+		fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Bold(true).Render("Pre-Context:"))
+		for _, line := range preContext {
+			if strings.TrimSpace(line) != "" {
+				fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(line))
+			}
 		}
+		fmt.Fprintln(&content, "")
 	}
 
 	// Error Message (Highlight)
-	errorStyle := lipgloss.NewStyle().
-		Foreground(m.styles.AccentBlue).
-		Bold(true)
-	fmt.Fprintln(&content, errorStyle.Render(selectedItem.Card.Message))
+	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render("ERROR:"))
+	fmt.Fprintln(&content, lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FF0000")).
+		Background(lipgloss.Color("#2D0000")).
+		Render(item.Card.Message))
+	fmt.Fprintln(&content, "")
 
 	// Post-context
-	for _, line := range selectedItem.GetPostContext() {
-		if strings.TrimSpace(line) != "" {
-			fmt.Fprintln(&content, contextStyle.Render(line))
+	postContext := item.GetPostContext()
+	if len(postContext) > 0 {
+		fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Bold(true).Render("Post-Context:"))
+		for _, line := range postContext {
+			if strings.TrimSpace(line) != "" {
+				fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.TextSecondary).Faint(true).Render(line))
+			}
 		}
 	}
 
-	// Wrap in viewport style
-	viewportStyle := m.styles.ViewportStyle().
-		Width(m.width - 4). // Account for padding/borders
-		Height(detailHeight)
-
-	return viewportStyle.Render(content.String())
+	// Wrap in viewport style (using strings.Builder content directly)
+	// Note: ideally we'd use a real viewport bubble here for scrolling long content,
+	// but for now we just render to string.
+	return content.String()
 }
