@@ -121,6 +121,10 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.header.CycleFilter()
 			m.applyFilter()
 			return m, nil
+		case "shift+tab":
+			m.header.CycleFilterBackward()
+			m.applyFilter()
+			return m, nil
 		case "/":
 			m.searchMode = true
 			m.searchQuery = ""
@@ -131,11 +135,15 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.detailFocused = !m.detailFocused
 			return m, nil
 		case "esc":
-			// Return focus to list
+			// If detail is focused, return to list
 			if m.detailFocused {
 				m.detailFocused = false
 				return m, nil
 			}
+			// Otherwise reset filter to ALL
+			m.header.ResetFilter()
+			m.applyFilter()
+			return m, nil
 		}
 	}
 
@@ -311,11 +319,24 @@ func (m MainModel) View() string {
 	// Combine panels horizontally
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanelWithHeader, rightPanel)
 
+	// Build help text with highlighted key bindings
+	keyStyle := lipgloss.NewStyle().Foreground(m.styles.PrimaryBlue).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
+
 	var helpText string
 	if m.detailFocused {
-		helpText = "q:quit • ↑/↓:scroll • esc:back to list"
+		helpText = fmt.Sprintf("%s: Scroll %s %s: Back %s %s: Quit",
+			keyStyle.Render("j/k"), sepStyle.Render("•"),
+			keyStyle.Render("Esc"), sepStyle.Render("•"),
+			keyStyle.Render("q"))
 	} else {
-		helpText = "q:quit • ↑/↓:navigate • tab:filter • /:search • enter:focus detail"
+		helpText = fmt.Sprintf("%s: Nav %s %s: View %s %s: Job %s %s: Search %s %s: Reset %s %s: Quit",
+			keyStyle.Render("j/k"), sepStyle.Render("•"),
+			keyStyle.Render("Enter"), sepStyle.Render("•"),
+			keyStyle.Render("Tab"), sepStyle.Render("•"),
+			keyStyle.Render("/"), sepStyle.Render("•"),
+			keyStyle.Render("Esc"), sepStyle.Render("•"),
+			keyStyle.Render("q"))
 	}
 	help := m.styles.HelpStyle().Render(helpText)
 
