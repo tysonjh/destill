@@ -8,8 +8,8 @@ import (
 
 // View renders the complete TUI layout
 func (m MainModel) View() string {
-	if m.width == 0 {
-		return "Initializing..."
+	if !m.ready {
+		return "\n  Initializing..."
 	}
 
 	// Render header

@@ -3,6 +3,7 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"destill-agent/src/contracts"
 )
@@ -19,6 +20,7 @@ type MainModel struct {
 	styles         *StyleConfig
 	searchMode     bool
 	searchQuery    string
+	ready          bool
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -55,6 +57,7 @@ func Start(cards []contracts.TriageCard) error {
 		items:          items,
 		styles:         styles,
 		detailViewport: viewport.New(0, 0),
+		ready:          false,
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -76,6 +79,23 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		
+		if !m.ready {
+			// Calculate initial dimensions for viewport
+			// We use the logic from resizeComponents here manually or just call it
+			// But to match example, we might want to be explicit about initialization
+			
+			headerHeight := lipgloss.Height(m.header.Render(m.width))
+			availableHeight := m.height - headerHeight - 1 - 1
+			contentWidth := m.width
+			leftPanelWidth := int(float64(contentWidth) * 0.4)
+			rightPanelWidth := contentWidth - leftPanelWidth
+			
+			m.detailViewport = viewport.New(rightPanelWidth-2, availableHeight-1)
+			m.detailViewport.YPosition = headerHeight + 1 // Approx?
+			m.ready = true
+		}
+
 		m.resizeComponents()
 
 		// Initialize detail content with first item on first render
