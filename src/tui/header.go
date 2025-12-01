@@ -18,19 +18,6 @@ type Header struct {
 	styles             *StyleConfig
 }
 
-// NewHeader creates a new header with default styles
-func NewHeader(projectStatus string, availableJobs []string) Header {
-	h := Header{
-		projectStatus:      projectStatus,
-		availableJobs:      availableJobs,
-		currentFilterIndex: 0,
-		rawFilterName:      "ALL",
-		styles:             DefaultStyles(),
-	}
-	h.selectedFilter = h.formatFilterDisplay("ALL")
-	return h
-}
-
 // NewHeaderWithStyles creates a new header with custom styles
 func NewHeaderWithStyles(projectStatus string, availableJobs []string, styles *StyleConfig) Header {
 	h := Header{

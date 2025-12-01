@@ -33,15 +33,6 @@ func NewDelegate() Delegate {
 	}
 }
 
-// NewDelegateWithStyles creates a new delegate with custom styles
-func NewDelegateWithStyles(styles *StyleConfig) Delegate {
-	return Delegate{
-		RankWidth:  2,
-		RecurWidth: 2,
-		styles:     styles,
-	}
-}
-
 // SetColumnWidths sets the widths for rank and recurrence columns
 func (d *Delegate) SetColumnWidths(maxRank, maxRecurrence int) {
 	// Calculate width needed for rank (number of digits)
