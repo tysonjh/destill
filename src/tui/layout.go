@@ -21,8 +21,13 @@ func (m MainModel) View() string {
 	availableHeight := m.height - headerHeight - 2 - 2
 
 	// Two-panel layout: Triage List (40%) | Context Detail (60%)
-	leftPanelWidth := int(float64(m.width) * 0.4)
-	rightPanelWidth := m.width - leftPanelWidth
+	// Account for borders: each panel has a border (2 chars each side = 4 total per panel)
+	// But when joined horizontally, borders overlap at the join point
+	// So total width used by borders = 2 (left panel left+right) + 2 (right panel left+right) = 4
+	totalBorderWidth := 4
+	contentWidth := m.width - totalBorderWidth
+	leftPanelWidth := int(float64(contentWidth) * 0.4)
+	rightPanelWidth := contentWidth - leftPanelWidth
 
 	// Render panels
 	leftPanel := m.renderListPanel(leftPanelWidth, availableHeight)
