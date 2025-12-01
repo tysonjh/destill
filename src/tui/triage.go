@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -12,14 +13,16 @@ import (
 
 // MainModel is the main Bubble Tea model for the application.
 type MainModel struct {
-	header      Header
-	listView    View
-	items       []Item
-	width       int
-	height      int
-	styles      *StyleConfig
-	searchMode  bool
-	searchQuery string
+	header         Header
+	listView       View
+	items          []Item
+	detailViewport viewport.Model
+	detailFocused  bool
+	width          int
+	height         int
+	styles         *StyleConfig
+	searchMode     bool
+	searchQuery    string
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -51,10 +54,11 @@ func Start(cards []contracts.TriageCard) error {
 	listView.SetItems(items)
 
 	model := MainModel{
-		header:   header,
-		listView: listView,
-		items:    items,
-		styles:   styles,
+		header:         header,
+		listView:       listView,
+		items:          items,
+		styles:         styles,
+		detailViewport: viewport.New(0, 0),
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -122,33 +126,47 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.searchQuery = ""
 			m.header.SetSearch(m.searchQuery, m.searchMode)
 			return m, nil
+		case "enter":
+			// Toggle focus to detail viewport
+			m.detailFocused = !m.detailFocused
+			return m, nil
+		case "esc":
+			// Return focus to list
+			if m.detailFocused {
+				m.detailFocused = false
+				return m, nil
+			}
 		}
 	}
 
-	// Update list view
-	m.listView, cmd = m.listView.Update(msg)
-	cmds = append(cmds, cmd)
+	// Route updates based on focus
+	if m.detailFocused {
+		// Detail viewport is focused, send keys to it
+		m.detailViewport, cmd = m.detailViewport.Update(msg)
+		cmds = append(cmds, cmd)
+	} else {
+		// List is focused, send keys to it
+		m.listView, cmd = m.listView.Update(msg)
+		cmds = append(cmds, cmd)
+		// Update detail content when list selection changes
+		if selectedItem, ok := m.listView.GetSelectedItem(); ok {
+			m.updateDetailContent(selectedItem)
+		}
+	}
 
 	return m, tea.Batch(cmds...)
 }
 
 func (m *MainModel) resizeComponents() {
-	// Calculate header height dynamically (same as in View)
-	headerView := m.header.Render(m.width)
-	headerHeight := lipgloss.Height(headerView)
-	footerHeight := 1 // Help text
-
-	// Available height for main content
-	availableHeight := m.height - headerHeight - footerHeight
-	if availableHeight < 10 {
-		availableHeight = 10
-	}
-
-	// Left panel width (40%)
+	// Calculate list size
 	leftPanelWidth := int(float64(m.width) * 0.4)
+	rightPanelWidth := m.width - leftPanelWidth
+	availableHeight := m.height - 7 // header(3) + help(1) + borders(2) + padding(1)
+	m.listView.SetSize(leftPanelWidth-4, availableHeight)
 
-	// Update list size (width minus borders)
-	m.listView.SetSize(leftPanelWidth-2, availableHeight)
+	// Resize viewport for detail panel (accounting for borders and job header)
+	m.detailViewport.Width = rightPanelWidth - 4
+	m.detailViewport.Height = availableHeight - 4
 }
 
 func (m *MainModel) applyFilter() {
@@ -199,6 +217,10 @@ func (m *MainModel) applyFilter() {
 	}
 
 	m.listView.SetItems(filtered)
+	// Update detail content for new selection
+	if selectedItem, ok := m.listView.GetSelectedItem(); ok {
+		m.updateDetailContent(selectedItem)
+	}
 }
 
 func (m MainModel) View() string {
@@ -206,24 +228,19 @@ func (m MainModel) View() string {
 		return "Initializing..."
 	}
 
-	// 1. Header
-	headerView := m.header.Render(m.width)
-	headerHeight := lipgloss.Height(headerView)
+	// Render header (now includes search)
+	header := m.header.Render(m.width)
+	headerHeight := lipgloss.Height(header)
 
-	// Calculate available height for main content
-	// Account for: Header + Help Footer (1 line) + some breathing room
-	// The border is included in the panel height, so don't double-count it
-	const footerHeight = 1
-	availableHeight := m.height - headerHeight - footerHeight
-	if availableHeight < 10 {
-		availableHeight = 10 // Minimum height to show something useful
-	}
+	// Calculate available height more carefully
+	// Account for: header + help line + panel borders (2 lines per panel)
+	availableHeight := m.height - headerHeight - 2 - 2
 
 	// Two-panel layout: Triage List (40%) | Context Detail (60%)
 	leftPanelWidth := int(float64(m.width) * 0.4)
 	rightPanelWidth := m.width - leftPanelWidth
 
-	// Ensure list size is updated (redundant if resizeComponents called, but safe)
+	// Set list size (accounting for panel borders)
 	m.listView.SetSize(leftPanelWidth-2, availableHeight)
 
 	// Left panel: Triage list
@@ -249,58 +266,60 @@ func (m MainModel) View() string {
 
 	// Right panel: Context detail view
 	var rightPanel string
-	selectedItem, ok := m.listView.GetSelectedItem()
-
-	if ok {
-		detailContent := m.renderDetail(selectedItem, rightPanelWidth-4, availableHeight-2)
-
+	if selectedItem, ok := m.listView.GetSelectedItem(); ok {
 		// Add placeholder header row with job name
-		jobHeaderRow := lipgloss.NewStyle().
+		placeholderRow := lipgloss.NewStyle().
 			Foreground(m.styles.PrimaryBlue).
 			Bold(true).
 			Padding(0, 1).
 			Render(fmt.Sprintf("Job: %s", selectedItem.Card.JobName))
 
-		detailWithHeader := lipgloss.JoinVertical(lipgloss.Left, jobHeaderRow,
+		// Show viewport content
+		borderStyle := m.styles.BorderColor
+		if m.detailFocused {
+			borderStyle = m.styles.AccentBlue
+		}
+
+		detailWithHeader := lipgloss.JoinVertical(lipgloss.Left, placeholderRow,
 			lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(m.styles.AccentBlue).
+				BorderForeground(borderStyle).
 				Width(rightPanelWidth).
-				Height(availableHeight).
-				Render(detailContent))
+				Height(availableHeight). // Match left panel height
+				Render(m.detailViewport.View()))
 
 		rightPanel = detailWithHeader
 	} else {
-		// Placeholder when nothing selected
+		// Add placeholder header row to align with left panel
 		placeholderRow := lipgloss.NewStyle().
 			Foreground(m.styles.TextSecondary).
 			Padding(0, 1).
-			Render(" ")
+			Render(" ") // Empty for now
 
 		emptyStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(m.styles.BorderColor).
 			Width(rightPanelWidth).
-			Height(availableHeight).
+			Height(availableHeight). // Match left panel height
 			Align(lipgloss.Center, lipgloss.Center).
 			Foreground(m.styles.TextSecondary).
 			Faint(true)
 
-		rightPanel = lipgloss.JoinVertical(lipgloss.Left, placeholderRow, emptyStyle.Render("← Select a card to view details"))
+		rightPanel = lipgloss.JoinVertical(lipgloss.Left, placeholderRow, emptyStyle.Render("← Navigate list to view details"))
 	}
 
 	// Combine panels horizontally
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanelWithHeader, rightPanel)
 
-	// 4. Footer
-	helpStyle := m.styles.HelpStyle().Render("↑/↓ navigate • tab filter • q quit")
+	var helpText string
+	if m.detailFocused {
+		helpText = "q:quit • ↑/↓:scroll • esc:back to list"
+	} else {
+		helpText = "q:quit • ↑/↓:navigate • tab:filter • /:search • enter:focus detail"
+	}
+	help := m.styles.HelpStyle().Render(helpText)
 
-	// Join vertically
-	return lipgloss.JoinVertical(lipgloss.Left,
-		headerView,
-		mainContent,
-		helpStyle,
-	)
+	return lipgloss.JoinVertical(lipgloss.Left, header, mainContent, help)
 }
 
 func (m MainModel) renderDetail(item Item, width, height int) string {
@@ -347,8 +366,13 @@ func (m MainModel) renderDetail(item Item, width, height int) string {
 		}
 	}
 
-	// Wrap in viewport style (using strings.Builder content directly)
-	// Note: ideally we'd use a real viewport bubble here for scrolling long content,
-	// but for now we just render to string.
 	return content.String()
+}
+
+// updateDetailContent updates the viewport with content from the selected item
+func (m *MainModel) updateDetailContent(item Item) {
+	rightPanelWidth := m.width - int(float64(m.width)*0.4)
+	availableHeight := m.height - 7
+	content := m.renderDetail(item, rightPanelWidth-4, availableHeight-2)
+	m.detailViewport.SetContent(content)
 }

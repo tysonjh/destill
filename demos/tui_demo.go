@@ -210,5 +210,107 @@ KeyError: 'customer_id'`,
 				"recurrence_count": "4",
 			},
 		},
+
+		// 9. Long Context Log - Requires Scrolling
+		{
+			ID:              "card-009",
+			Source:          "buildkite",
+			JobName:         "job-long-context",
+			Severity:        "ERROR",
+			Message:         "RuntimeError: Failed to process large batch job after extensive processing pipeline",
+			MessageHash:     "aabbccdd11223344556677889900eeff",
+			ConfidenceScore: 0.94,
+			PreContext: `[2025-11-30 10:15:23] INFO: Pipeline Stage 1/10: Data Ingestion Started
+[2025-11-30 10:15:24] INFO: Loading configuration from config/pipeline.yaml
+[2025-11-30 10:15:24] INFO: Validating schema for input dataset
+[2025-11-30 10:15:25] INFO: Schema validation passed: 45 columns detected
+[2025-11-30 10:15:25] INFO: Initiating data load from S3: s3://data-lake/raw/2025-11-30/
+[2025-11-30 10:15:26] INFO: Downloaded 1.2GB in 850ms
+[2025-11-30 10:15:26] INFO: Decompressing archive...
+[2025-11-30 10:15:28] INFO: Extracted 5.8GB of CSV data
+[2025-11-30 10:15:28] INFO: Pipeline Stage 2/10: Data Cleansing Started
+[2025-11-30 10:15:29] INFO: Removing duplicate records...
+[2025-11-30 10:15:32] INFO: Found and removed 12,543 duplicate entries
+[2025-11-30 10:15:32] INFO: Validating data types...
+[2025-11-30 10:15:35] INFO: Converting timestamp fields to UTC
+[2025-11-30 10:15:37] INFO: Normalizing currency values to USD
+[2025-11-30 10:15:39] INFO: Pipeline Stage 3/10: Data Enrichment Started
+[2025-11-30 10:15:40] INFO: Fetching enrichment data from API: https://api.enrichment.example.com
+[2025-11-30 10:15:41] INFO: API Rate limit: 1000 req/min, current: 245 req/min
+[2025-11-30 10:15:43] INFO: Enriched 50,000 records with geolocation data
+[2025-11-30 10:15:45] INFO: Enriched 50,000 records with demographic data
+[2025-11-30 10:15:47] INFO: Pipeline Stage 4/10: Data Transformation Started
+[2025-11-30 10:15:48] INFO: Applying business rules engine
+[2025-11-30 10:15:50] INFO: Executing rule: customer_segment_classification
+[2025-11-30 10:15:52] INFO: Executing rule: revenue_tier_assignment
+[2025-11-30 10:15:54] INFO: Executing rule: churn_risk_calculation
+[2025-11-30 10:15:56] INFO: Pipeline Stage 5/10: Data Aggregation Started
+[2025-11-30 10:15:57] INFO: Computing daily aggregates...
+[2025-11-30 10:15:59] INFO: Computing weekly aggregates...
+[2025-11-30 10:16:01] INFO: Computing monthly aggregates...
+[2025-11-30 10:16:03] INFO: Pipeline Stage 6/10: Quality Checks Started
+[2025-11-30 10:16:04] INFO: Running data quality suite (25 checks)
+[2025-11-30 10:16:05] INFO: Check 1/25: NULL value threshold - PASSED
+[2025-11-30 10:16:06] INFO: Check 2/25: Data freshness - PASSED
+[2025-11-30 10:16:07] INFO: Check 3/25: Referential integrity - PASSED
+[2025-11-30 10:16:08] INFO: Check 4/25: Value range validation - PASSED
+[2025-11-30 10:16:09] WARN: Check 5/25: Outlier detection - 127 outliers detected (within threshold)
+[2025-11-30 10:16:10] INFO: Check 6/25: Distribution consistency - PASSED
+[2025-11-30 10:16:11] INFO: Pipeline Stage 7/10: Feature Engineering Started
+[2025-11-30 10:16:12] INFO: Generating time-based features...
+[2025-11-30 10:16:14] INFO: Generating categorical embeddings...
+[2025-11-30 10:16:16] INFO: Generating interaction features...
+[2025-11-30 10:16:18] INFO: Feature matrix now contains 342 features
+[2025-11-30 10:16:19] INFO: Pipeline Stage 8/10: Model Scoring Started
+[2025-11-30 10:16:20] INFO: Loading ML model from: models/prod/v2.4.1/model.pkl
+[2025-11-30 10:16:22] INFO: Model loaded successfully (size: 245MB)
+[2025-11-30 10:16:23] INFO: Running inference on batch 1/10...
+[2025-11-30 10:16:25] INFO: Running inference on batch 2/10...
+[2025-11-30 10:16:27] INFO: Running inference on batch 3/10...
+[2025-11-30 10:16:29] INFO: Running inference on batch 4/10...
+[2025-11-30 10:16:31] INFO: Running inference on batch 5/10...
+[2025-11-30 10:16:33] WARN: Memory usage at 85% - triggering garbage collection
+[2025-11-30 10:16:34] INFO: GC completed, freed 1.2GB
+[2025-11-30 10:16:35] INFO: Running inference on batch 6/10...
+[2025-11-30 10:16:37] INFO: Running inference on batch 7/10...
+[2025-11-30 10:16:39] INFO: Running inference on batch 8/10...
+[2025-11-30 10:16:41] INFO: Running inference on batch 9/10...
+[2025-11-30 10:16:43] INFO: Running inference on batch 10/10...
+[2025-11-30 10:16:45] INFO: Inference complete: 500,000 predictions generated
+[2025-11-30 10:16:46] INFO: Pipeline Stage 9/10: Results Aggregation Started
+[2025-11-30 10:16:47] INFO: Aggregating predictions by customer segment...
+[2025-11-30 10:16:49] INFO: Generating summary statistics...
+[2025-11-30 10:16:51] INFO: Computing confidence intervals...
+[2025-11-30 10:16:53] ERROR: Unexpected data format in aggregation stage`,
+			PostContext: `[2025-11-30 10:16:53] ERROR: Stack trace:
+Traceback (most recent call last):
+  File "pipeline/orchestrator.py", line 234, in run_pipeline
+    stage.execute(data_context)
+  File "pipeline/stages/aggregation.py", line 89, in execute
+    results = self.aggregate_results(context.predictions)
+  File "pipeline/stages/aggregation.py", line 156, in aggregate_results
+    grouped = predictions.groupby(['segment', 'tier'])
+  File "pandas/core/frame.py", line 8402, in groupby
+    return DataFrameGroupBy(obj=self, keys=by, **kwargs)
+  File "pandas/core/groupby/groupby.py", line 965, in __init__
+    raise KeyError(f"Column '{key}' not found in DataFrame")
+RuntimeError: Failed to process large batch job after extensive processing pipeline
+
+[2025-11-30 10:16:54] ERROR: Pipeline failed at stage 9/10
+[2025-11-30 10:16:54] ERROR: Total execution time: 1m 31s
+[2025-11-30 10:16:54] INFO: Cleaning up temporary resources...
+[2025-11-30 10:16:55] INFO: Temporary files removed: 15.2GB freed
+[2025-11-30 10:16:55] INFO: Closing database connections...
+[2025-11-30 10:16:56] INFO: Releasing compute resources...
+[2025-11-30 10:16:57] ERROR: Pipeline execution FAILED
+[2025-11-30 10:16:57] INFO: Error report saved to: logs/pipeline-error-2025-11-30-10-16-57.json
+[2025-11-30 10:16:57] INFO: Performance metrics saved to: metrics/pipeline-2025-11-30.csv
+[2025-11-30 10:16:58] INFO: Sending notification to on-call engineer
+[2025-11-30 10:16:59] INFO: Notification sent successfully
+[2025-11-30 10:17:00] INFO: Exiting with error code 1`,
+			Metadata: map[string]string{
+				"recurrence_count": "7",
+			},
+		},
 	}
 }
