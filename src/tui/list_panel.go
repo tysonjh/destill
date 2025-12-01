@@ -8,8 +8,7 @@ import (
 
 // renderListPanel renders the left panel with triage list
 func (m MainModel) renderListPanel(width, height int) string {
-	// Set list size (accounting for panel borders)
-	m.listView.SetSize(width-2, height)
+	// Note: list size is set in resizeComponents(), not here during render
 
 	// Render list with border
 	listPanel := lipgloss.NewStyle().
