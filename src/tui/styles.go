@@ -14,6 +14,10 @@ type StyleConfig struct {
 	BorderColor    lipgloss.Color
 	SelectedColor  lipgloss.Color
 
+	// Error highlighting colors
+	ErrorForeground lipgloss.Color
+	ErrorBackground lipgloss.Color
+
 	// Accent colors for different job types
 	JobColors []lipgloss.Color
 }
@@ -21,14 +25,16 @@ type StyleConfig struct {
 // DefaultStyles returns the default color palette
 func DefaultStyles() *StyleConfig {
 	return &StyleConfig{
-		PrimaryBlue:    lipgloss.Color("#8AB4F8"),
-		AccentBlue:     lipgloss.Color("#4285F4"),
-		DarkBackground: lipgloss.Color("#1E1E1E"),
-		CardBackground: lipgloss.Color("#2D2D2D"),
-		TextPrimary:    lipgloss.Color("#E8EAED"),
-		TextSecondary:  lipgloss.Color("#9AA0A6"),
-		BorderColor:    lipgloss.Color("#5F6368"),
-		SelectedColor:  lipgloss.Color("#303134"),
+		PrimaryBlue:     lipgloss.Color("#8AB4F8"),
+		AccentBlue:      lipgloss.Color("#4285F4"),
+		DarkBackground:  lipgloss.Color("#1E1E1E"),
+		CardBackground:  lipgloss.Color("#2D2D2D"),
+		TextPrimary:     lipgloss.Color("#E8EAED"),
+		TextSecondary:   lipgloss.Color("#9AA0A6"),
+		BorderColor:     lipgloss.Color("#5F6368"),
+		SelectedColor:   lipgloss.Color("#303134"),
+		ErrorForeground: lipgloss.Color("#FF0000"),
+		ErrorBackground: lipgloss.Color("#2D0000"),
 		JobColors: []lipgloss.Color{
 			lipgloss.Color("#34A853"), // Green
 			lipgloss.Color("#FBBC04"), // Yellow

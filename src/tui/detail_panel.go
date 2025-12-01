@@ -48,12 +48,12 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	}
 
 	// Error Message (Highlight) - clean and wrap before styling
-	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000")).Bold(true).Render("ERROR:"))
+	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.ErrorForeground).Bold(true).Render("ERROR:"))
 	cleanMessage := CleanLogText(item.Card.Message)
 	wrappedError := Wrap(cleanMessage, maxWidth)
 	fmt.Fprint(&content, lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FF0000")).
-		Background(lipgloss.Color("#2D0000")).
+		Foreground(m.styles.ErrorForeground).
+		Background(m.styles.ErrorBackground).
 		Render(wrappedError))
 	fmt.Fprintln(&content, "")
 	fmt.Fprintln(&content, "")
