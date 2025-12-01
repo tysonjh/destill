@@ -324,15 +324,6 @@ Example:
 			}
 		}
 
-		// Debug: print first card's message info
-		if len(groupedCards) > 0 {
-			card := groupedCards[0]
-			fmt.Printf("DEBUG: First card Message length: %d\n", len(card.Message))
-			fmt.Printf("DEBUG: First card Message (first 100 chars): %.100s\n", card.Message)
-			fmt.Printf("DEBUG: First card PreContext length: %d\n", len(card.PreContext))
-			fmt.Printf("DEBUG: First card PostContext length: %d\n", len(card.PostContext))
-		}
-
 		// Brief pause to ensure any remaining log output completes before TUI starts
 		time.Sleep(500 * time.Millisecond)
 
