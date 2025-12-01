@@ -3,7 +3,6 @@ package tui
 import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"destill-agent/src/contracts"
 )
@@ -81,15 +80,9 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 		if !m.ready {
-			// Calculate initial dimensions for viewport
-			headerHeight := lipgloss.Height(m.header.Render(m.width))
-			// Account for: header (2) + help line (1) + panel column header row (1) + panel borders (2)
-			availableHeight := m.height - headerHeight - 1 - 1 - 2
-			contentWidth := m.width
-			leftPanelWidth := int(float64(contentWidth) * 0.4)
-			rightPanelWidth := contentWidth - leftPanelWidth
-
-			m.detailViewport = viewport.New(rightPanelWidth-2, availableHeight-1)
+			// Initialize viewport with calculated dimensions
+			dims := m.calculateDimensions()
+			m.detailViewport = viewport.New(dims.rightPanelWidth-2, dims.availableHeight-1)
 			m.ready = true
 		}
 

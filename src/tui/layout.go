@@ -6,6 +6,31 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// panelDimensions holds calculated layout dimensions
+type panelDimensions struct {
+	availableHeight  int
+	leftPanelWidth   int
+	rightPanelWidth  int
+}
+
+// calculateDimensions computes panel sizes based on terminal dimensions.
+// This centralizes the layout math to ensure consistency across render and resize.
+func (m MainModel) calculateDimensions() panelDimensions {
+	headerHeight := lipgloss.Height(m.header.Render(m.width))
+	// Account for: header + help line (1) + panel column header row (1) + panel borders (2)
+	availableHeight := m.height - headerHeight - 1 - 1 - 2
+
+	// Two-panel layout: Triage List (40%) | Context Detail (60%)
+	leftPanelWidth := int(float64(m.width) * 0.4)
+	rightPanelWidth := m.width - leftPanelWidth
+
+	return panelDimensions{
+		availableHeight:  availableHeight,
+		leftPanelWidth:   leftPanelWidth,
+		rightPanelWidth:  rightPanelWidth,
+	}
+}
+
 // View renders the complete TUI layout
 func (m MainModel) View() string {
 	if !m.ready {
@@ -14,21 +39,13 @@ func (m MainModel) View() string {
 
 	// Render header
 	header := m.header.Render(m.width)
-	headerHeight := lipgloss.Height(header)
 
-	// Calculate available height for panels
-	// Account for: header (2) + help line (1) + panel column header row (1) + panel borders (2)
-	availableHeight := m.height - headerHeight - 1 - 1 - 2
-
-	// Two-panel layout: Triage List (40%) | Context Detail (60%)
-	// The lipgloss JoinHorizontal function handles the space.
-	contentWidth := m.width
-	leftPanelWidth := int(float64(contentWidth) * 0.4)
-	rightPanelWidth := contentWidth - leftPanelWidth
+	// Calculate panel dimensions
+	dims := m.calculateDimensions()
 
 	// Render panels
-	leftPanel := m.renderListPanel(leftPanelWidth, availableHeight)
-	rightPanel := m.renderDetailPanel(rightPanelWidth, availableHeight)
+	leftPanel := m.renderListPanel(dims.leftPanelWidth, dims.availableHeight)
+	rightPanel := m.renderDetailPanel(dims.rightPanelWidth, dims.availableHeight)
 
 	// Combine panels horizontally
 	mainContent := lipgloss.JoinHorizontal(lipgloss.Top, leftPanel, rightPanel)
@@ -65,21 +82,14 @@ func (m MainModel) renderHelpText() string {
 
 // resizeComponents handles window resize events
 func (m *MainModel) resizeComponents() {
-	headerHeight := lipgloss.Height(m.header.Render(m.width))
-	// Account for: header (2) + help line (1) + panel column header row (1) + panel borders (2)
-	availableHeight := m.height - headerHeight - 1 - 1 - 2
+	dims := m.calculateDimensions()
 
-	// Calculate panel dimensions
-	contentWidth := m.width
-	leftPanelWidth := int(float64(contentWidth) * 0.4)
-	rightPanelWidth := contentWidth - leftPanelWidth
-
-	// Resize list view
-	m.listView.SetSize(leftPanelWidth-2, availableHeight)
+	// Resize list view (accounting for panel borders)
+	m.listView.SetSize(dims.leftPanelWidth-2, dims.availableHeight)
 
 	// Resize viewport for detail panel (accounting for borders and job header)
-	m.detailViewport.Width = rightPanelWidth - 2
-	m.detailViewport.Height = availableHeight - 1 // -1 for the job header row
+	m.detailViewport.Width = dims.rightPanelWidth - 2
+	m.detailViewport.Height = dims.availableHeight - 1 // -1 for the job header row
 
 	// Initialize detail content if not already set and we have items
 	if m.detailViewport.TotalLineCount() == 0 {
