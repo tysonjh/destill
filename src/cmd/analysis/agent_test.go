@@ -375,6 +375,12 @@ func TestNormalizeLogComprehensive(t *testing.T) {
 			contains:    []string{"[timestamp]", "error", "connection", "[ip]", "[port]", "failed", "request", "[uuid]", "[pid]", "[seq]"},
 			notContains: []string{"2025-11-28", "10.0.0.5", "5432", "550e8400", "1234", "5678"},
 		},
+		{
+			name:        "heuristic skeletonization - mixed alphanumeric",
+			input:       "Error in module_55 processing item_id_99",
+			contains:    []string{"error", "in", "[var]", "processing"},
+			notContains: []string{"module_55", "item_id_99"},
+		},
 	}
 
 	for _, test := range tests {

@@ -71,6 +71,10 @@ var (
 	// Success/informational messages that shouldn't be flagged as errors
 	testPassedPattern         = regexp.MustCompile(`(?i)(tests?\s+passed|all\s+tests?\s+(passed|succeeded)|build\s+succeeded|successfully\s+completed)`)
 	deprecationWarningPattern = regexp.MustCompile(`(?i)(deprecated|deprecation\s+warning)`)
+
+	// Heuristic skeletonization: matches any word containing at least one digit
+	// Catches unknown variable formats like "user_123", "v2.5", "module_55", "item_id_99"
+	mixedAlphaNumericPattern = regexp.MustCompile(`\b\w*\d\w*\b`)
 )
 
 // Agent subscribes to raw logs and performs analysis.
@@ -265,7 +269,12 @@ func (a *Agent) normalizeLog(content string) string {
 	// Step 10: Convert to lowercase for case-insensitive matching
 	normalized = strings.ToLower(normalized)
 
-	// Step 11: Trim leading/trailing whitespace
+	// Step 11: Heuristic Skeletonization (Digit Sweeper)
+	// Aggressively replace any remaining words containing digits with [VAR]
+	// This catches unknown variable formats like "user_123", "v2.5", "module_55"
+	normalized = mixedAlphaNumericPattern.ReplaceAllString(normalized, "[var]")
+
+	// Step 12: Trim leading/trailing whitespace
 	normalized = strings.TrimSpace(normalized)
 
 	return normalized
