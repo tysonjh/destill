@@ -1,17 +1,29 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 )
 
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 // VisualWidth returns the display width of text, accounting for multi-byte characters
+// and stripping ANSI escape codes for accurate calculation.
 func VisualWidth(s string) int {
-	return runewidth.StringWidth(s)
+	return lipgloss.Width(s)
 }
 
-// Truncate truncates text to maxLen characters (visual width) with optional ellipsis
+// StripAnsi removes ANSI escape codes from the string
+func StripAnsi(s string) string {
+	return ansiRegex.ReplaceAllString(s, "")
+}
+
+// Truncate truncates text to maxLen characters (visual width) with optional ellipsis.
+// This function strips ANSI codes to ensure strict length compliance and avoid
+// broken escape sequences in tabular layouts.
 func Truncate(s string, maxLen int, ellipsis bool) string {
 	// Replace newlines and tabs with spaces to ensure single-line display
 	s = strings.ReplaceAll(s, "\n", " ")
@@ -19,6 +31,10 @@ func Truncate(s string, maxLen int, ellipsis bool) string {
 	s = strings.ReplaceAll(s, "\t", " ")
 	s = strings.TrimSpace(s)
 	
+	// Strip ANSI to ensure we don't truncate in the middle of an escape sequence
+	// and to guarantee the resulting visual width matches expectation.
+	s = StripAnsi(s)
+
 	if maxLen <= 0 {
 		return ""
 	}
