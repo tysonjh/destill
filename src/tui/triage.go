@@ -322,7 +322,7 @@ func (m MainModel) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainContent, help)
 }
 
-func (m MainModel) renderDetail(item Item, width, height int) string {
+func (m MainModel) renderDetail(item Item) string {
 	content := strings.Builder{}
 
 	// Detail Header
@@ -371,8 +371,6 @@ func (m MainModel) renderDetail(item Item, width, height int) string {
 
 // updateDetailContent updates the viewport with content from the selected item
 func (m *MainModel) updateDetailContent(item Item) {
-	rightPanelWidth := m.width - int(float64(m.width)*0.4)
-	availableHeight := m.height - 7
-	content := m.renderDetail(item, rightPanelWidth-4, availableHeight-2)
+	content := m.renderDetail(item)
 	m.detailViewport.SetContent(content)
 }
