@@ -113,9 +113,16 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	rankFmt := fmt.Sprintf("%%%dd", d.RankWidth)   // e.g., "%3d" for 3-digit width
 	recurFmt := fmt.Sprintf("%%%dd", d.RecurWidth) // e.g., "%4d" for 4-digit width
 
-	rankCol := fmt.Sprintf(rankFmt, entry.Rank)                                         // dynamic width, right aligned
-	confCol := fmt.Sprintf("%-3s", fmt.Sprintf("%.2f", entry.Card.ConfidenceScore)[1:]) // 4 chars, left aligned, decimal point on left (.95)
-	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence())                            // dynamic width, right aligned
+	rankCol := fmt.Sprintf(rankFmt, entry.Rank)      // dynamic width, right aligned
+	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence()) // dynamic width, right aligned
+
+	// Format confidence score: show ".95" for < 1.0, "1.0" for 1.0
+	var confCol string
+	if entry.Card.ConfidenceScore >= 1.0 {
+		confCol = "1.0"
+	} else {
+		confCol = fmt.Sprintf("%.2f", entry.Card.ConfidenceScore)[1:] // ".95" format
+	}
 
 	// Calculate available width for snippet
 	// Fixed columns: rank + conf (3) + recurrence + separators (9)
