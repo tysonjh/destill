@@ -51,9 +51,9 @@ var (
 	sequencePattern = regexp.MustCompile(`(?i)\b(seq|sequence|id|index|count)[\s=:]*\d+\b`)
 
 	// High-signal anchor pattern: severity keywords appearing near the start of the line
-	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
-	// Character class: ] at start, - at end to avoid escaping issues
-	highSignalPattern = regexp.MustCompile(`(?i)^.{0,50}\b(?:FATAL|ERROR|PANIC|EXCEPTION|CRITICAL)\s*[]:|[-]`)
+	// with a separator (e.g., "ERROR:", "FATAL |", "[ERROR]")
+	// Excludes hyphen to avoid matching CLI flags like --error-level
+	highSignalPattern = regexp.MustCompile(`(?i)^.{0,50}\b(?:FATAL|ERROR|PANIC|EXCEPTION|CRITICAL)\s*[]:|]`)
 
 	// Penalty patterns: high-confidence false positive indicators
 	// These reduce confidence scores to minimize false positive triage burden
