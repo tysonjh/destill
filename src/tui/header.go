@@ -130,9 +130,9 @@ func (h Header) Render(width int) string {
 	statusText := fmt.Sprintf("%s %s", statusIcon, h.projectStatus)
 	if h.cardCount > 0 {
 		if h.lowConfidenceCount > 0 {
-			statusText = fmt.Sprintf("%s (%d cards, %d low conf, %d jobs)", statusText, h.cardCount, h.lowConfidenceCount, h.jobCount)
+			statusText = fmt.Sprintf("%s (%d findings, %d low conf, %d jobs)", statusText, h.cardCount, h.lowConfidenceCount, h.jobCount)
 		} else {
-			statusText = fmt.Sprintf("%s (%d cards, %d jobs)", statusText, h.cardCount, h.jobCount)
+			statusText = fmt.Sprintf("%s (%d findings, %d jobs)", statusText, h.cardCount, h.jobCount)
 		}
 	}
 	status := statusStyle.Render(statusText)
