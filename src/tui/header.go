@@ -16,6 +16,12 @@ type Header struct {
 	searchQuery        string
 	searchMode         bool
 	styles             *StyleConfig
+
+	// Streaming status
+	loadStatus    LoadStatus
+	cardCount     int
+	jobCount      int
+	pendingCount  int
 }
 
 // NewHeaderWithStyles creates a new header with custom styles
@@ -70,22 +76,73 @@ func (h *Header) SetSearch(query string, mode bool) {
 	h.searchMode = mode
 }
 
+// SetLoadStatus updates the loading status display
+func (h *Header) SetLoadStatus(status LoadStatus, cardCount, jobCount int) {
+	h.loadStatus = status
+	h.cardCount = cardCount
+	h.jobCount = jobCount
+}
+
+// SetPendingCount updates the pending cards count
+func (h *Header) SetPendingCount(count int) {
+	h.pendingCount = count
+}
+
+// AddJob adds a new job to the available jobs list
+func (h *Header) AddJob(jobName string) {
+	// Check if already exists
+	for _, j := range h.availableJobs {
+		if j == jobName {
+			return
+		}
+	}
+	h.availableJobs = append(h.availableJobs, jobName)
+	// Update filter display to reflect new job count
+	h.selectedFilter = h.formatFilterDisplay(h.rawFilterName)
+}
+
 // Render renders the header
 func (h Header) Render(width int) string {
-	// Project status section
+	// Project status section with loading indicator
 	statusStyle := lipgloss.NewStyle().
 		Foreground(h.styles.PrimaryBlue).
 		Bold(true).
 		Padding(0, 2)
 
-	status := statusStyle.Render(fmt.Sprintf("📊 %s", h.projectStatus))
+	var statusIcon string
+	switch h.loadStatus {
+	case StatusLoading:
+		statusIcon = "⏳"
+	case StatusComplete:
+		statusIcon = "✅"
+	case StatusError:
+		statusIcon = "❌"
+	default:
+		statusIcon = "📊"
+	}
+
+	statusText := fmt.Sprintf("%s %s", statusIcon, h.projectStatus)
+	if h.cardCount > 0 {
+		statusText = fmt.Sprintf("%s (%d cards, %d jobs)", statusText, h.cardCount, h.jobCount)
+	}
+	status := statusStyle.Render(statusText)
+
+	// Pending indicator (shows when new cards waiting)
+	var pending string
+	if h.pendingCount > 0 {
+		pendingStyle := lipgloss.NewStyle().
+			Foreground(h.styles.AccentYellow).
+			Bold(true).
+			Padding(0, 1)
+		pending = pendingStyle.Render(fmt.Sprintf("⚡ %d new (r)", h.pendingCount))
+	}
 
 	// Filter section - truncate if necessary to prevent wrapping
 	filterStyle := lipgloss.NewStyle().
 		Foreground(h.styles.PrimaryBlue).
 		Bold(true).
 		Padding(0, 2).
-		MaxWidth(width / 3) // Limit filter width to prevent wrapping
+		MaxWidth(width / 4) // Limit filter width to prevent wrapping
 
 	filter := filterStyle.Render(fmt.Sprintf("⚙️ Job: %s", h.selectedFilter))
 
@@ -102,7 +159,7 @@ func (h Header) Render(width int) string {
 	searchStyle := lipgloss.NewStyle().
 		Foreground(h.styles.TextSecondary).
 		Padding(0, 2).
-		MaxWidth(width / 3) // Limit search width to prevent wrapping
+		MaxWidth(width / 4) // Limit search width to prevent wrapping
 	if h.searchMode {
 		searchStyle = searchStyle.Foreground(h.styles.PrimaryBlue)
 	}
@@ -110,7 +167,7 @@ func (h Header) Render(width int) string {
 	search := searchStyle.Render(searchText)
 
 	// Combine sections
-	leftSection := lipgloss.JoinHorizontal(lipgloss.Left, status, filter, search)
+	leftSection := lipgloss.JoinHorizontal(lipgloss.Left, status, pending, filter, search)
 
 	// Create header bar - no background to ensure visibility on any terminal
 	// Note: BorderBottom adds 2 chars (left and right corners), so content width is width - 2

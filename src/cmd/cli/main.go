@@ -25,8 +25,8 @@ var (
 	msgBroker contracts.MessageBroker
 	// Application configuration
 	appConfig *config.Config
-	// Flag to track if we're in --wait mode (affects logging)
-	isWaitMode bool
+	// Flag to track if we're in --detach mode (non-interactive, no TUI)
+	isDetachMode bool
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -52,13 +52,13 @@ It uses a stream processing architecture with:
 		// Initialize the broker before any command runs
 		inMemoryBroker := broker.NewInMemoryBroker()
 
-		// Check if we're in --wait mode
-		waitFlag := cmd.Flags().Lookup("wait")
-		isWaitMode = waitFlag != nil && waitFlag.Value.String() == "true"
+		// Check if we're in --detach mode (non-interactive)
+		detachFlag := cmd.Flags().Lookup("detach")
+		isDetachMode = detachFlag != nil && detachFlag.Value.String() == "true"
 
-		// Only enable verbose broker logging if NOT using --wait mode
-		// (--wait mode will launch TUI, so we don't want logs interfering)
-		if !isWaitMode {
+		// Only enable verbose broker logging in detach mode
+		// (TUI mode needs quiet broker to prevent log interference)
+		if isDetachMode {
 			inMemoryBroker.SetVerbose(true)
 		}
 
@@ -78,17 +78,17 @@ It uses a stream processing architecture with:
 // analyzeCmd represents the analyze command
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze",
-	Short: "Launch the TUI to view triage cards",
+	Short: "Launch the TUI to view existing triage cards (requires persistent broker)",
 	Long: `Waits for triage cards to appear on the ci_failures_ranked topic and displays them
 in an interactive TUI.
 
 This command is useful when:
-- Using a persistent message broker (Redis, Kafka, etc.) where data survives between processes
+- Using a persistent message broker (Redpanda, Kafka, etc.) where data survives between processes
 - Running alongside other processes that are producing triage cards
 - Viewing results from previously submitted builds
 
-For in-memory broker: Use 'destill build <url> --wait' instead, which runs the
-complete pipeline in a single process.
+For in-memory broker: Use 'destill build <url>' instead, which runs the
+complete pipeline in a single process with streaming TUI.
 
 Example:
   destill analyze`,
@@ -105,8 +105,8 @@ Example:
 			fmt.Println("⚠️  No failure cards collected.")
 			fmt.Println()
 			fmt.Println("💡 Tips:")
-			fmt.Println("   • With in-memory broker: Use 'destill build <url> --wait'")
-			fmt.Println("   • With persistent broker: Ensure builds have been submitted via 'destill build <url>'")
+			fmt.Println("   • With in-memory broker: Use 'destill build <url>' (TUI is default)")
+			fmt.Println("   • With persistent broker: Ensure builds have been submitted via 'destill build <url> --detach'")
 			return
 		}
 
@@ -211,23 +211,28 @@ func groupCardsByHash(cards []contracts.TriageCard) []contracts.TriageCard {
 // buildCmd represents the build command
 var buildCmd = &cobra.Command{
 	Use:   "build [build-url]",
-	Short: "Submits an entire Buildkite build run for analysis.",
+	Short: "Analyzes a Buildkite build and launches the triage TUI.",
 	Long: `Submits a Buildkite URL (e.g., https://buildkite.com/org/pipeline/builds/4091) 
-to the destill_requests topic. The Ingestion Agent will then discover all job 
-logs associated with that build and process them.
+for analysis and launches the interactive TUI in streaming mode.
 
-With --wait flag: Keeps the process running, collects results, and launches the TUI.
-This is useful with the in-memory broker for immediate feedback.
+By default: Launches the TUI immediately. Cards appear in real-time as they are 
+analyzed. Press 'r' to refresh/re-rank the list when new cards arrive.
 
-Without --wait: Publishes the request and exits immediately. Requires a persistent
-message broker (Redis, Kafka, etc.) to retain data between process invocations.
+With --detach: Publishes the request and exits immediately without launching TUI.
+Useful for CI/automation. Requires a persistent message broker (Redpanda, Kafka)
+to retain data between process invocations.
+
+With --cache: Load previously saved cards from a JSON file for fast iteration
+during development.
 
 Example:
-  destill build https://buildkite.com/org/pipeline/builds/4091 --wait`,
+  destill build https://buildkite.com/org/pipeline/builds/4091
+  destill build https://buildkite.com/org/pipeline/builds/4091 --cache build.json
+  destill build https://buildkite.com/org/pipeline/builds/4091 --detach`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		buildURL := args[0]
-		waitForResults, _ := cmd.Flags().GetBool("wait")
+		detachMode, _ := cmd.Flags().GetBool("detach")
 
 		// Create the request payload
 		request := struct {
@@ -251,102 +256,82 @@ Example:
 			os.Exit(1)
 		}
 
-		if !waitForResults {
-			// Fire-and-forget mode (production with persistent broker)
+		if detachMode {
+			// Detached mode (for CI/automation with persistent broker)
 			fmt.Printf("✅ Submitted build request %s\n", request.RequestID)
 			fmt.Printf("   Build URL: %s\n", buildURL)
 			fmt.Println()
 			fmt.Println("The pipeline will discover and process all job logs from this build.")
 			fmt.Println()
-			fmt.Println("💡 Tip: Use --wait flag to wait for results and launch the TUI.")
-			fmt.Println("   (Required when using in-memory broker)")
+			fmt.Println("💡 Note: Using --detach mode. Results will be available in the message broker.")
+			fmt.Println("   Use 'destill view' to see results later (requires persistent broker).")
 			return
 		}
 
 		// Check for cache flag
 		cacheFile, _ := cmd.Flags().GetString("cache")
-		var groupedCards []contracts.TriageCard
+		var initialCards []contracts.TriageCard
 
 		if cacheFile != "" {
 			// Try to load from cache
 			if data, err := os.ReadFile(cacheFile); err == nil {
-				if err := json.Unmarshal(data, &groupedCards); err == nil {
-					fmt.Printf("📂 Loaded %d cards from cache: %s\n", len(groupedCards), cacheFile)
+				if err := json.Unmarshal(data, &initialCards); err == nil {
+					fmt.Printf("📂 Loaded %d cards from cache: %s\n", len(initialCards), cacheFile)
 				}
 			}
 		}
 
-		if len(groupedCards) == 0 {
-			// Interactive mode (wait for results and show TUI)
-			fmt.Println("Destill - CI/CD Failure Triage")
-			fmt.Println("===============================")
-			fmt.Printf("Build URL: %s\n", buildURL)
-			fmt.Println()
-			fmt.Println("📥 Fetching build metadata and job logs...")
-			fmt.Println("🔍 Analyzing logs for failures...")
-			fmt.Println("⏳ Waiting for pipeline to complete (10 seconds)...")
-			fmt.Println()
-
-			// Collect triage cards from the pipeline
-			cards := collectTriageCards(10 * time.Second)
-
-			if len(cards) == 0 {
-				fmt.Println("✅ No failures detected in this build!")
-				fmt.Println()
-				return
-			}
-
-			fmt.Printf("📊 Found %d failure(s). Launching TUI...\n", len(cards))
-			fmt.Println()
-
-			// Group cards by message hash to reduce noise
-			groupedCards = groupCardsByHash(cards)
-			fmt.Printf("📊 Grouped into %d unique failure types. Launching TUI...\n", len(groupedCards))
-			fmt.Println()
-
-			// Sort grouped cards by confidence score (descending), then by recurrence count
-			sort.Slice(groupedCards, func(i, j int) bool {
-				if groupedCards[i].ConfidenceScore != groupedCards[j].ConfidenceScore {
-					return groupedCards[i].ConfidenceScore > groupedCards[j].ConfidenceScore
+		// Sort initial cards if loaded from cache
+		if len(initialCards) > 0 {
+			sort.Slice(initialCards, func(i, j int) bool {
+				if initialCards[i].ConfidenceScore != initialCards[j].ConfidenceScore {
+					return initialCards[i].ConfidenceScore > initialCards[j].ConfidenceScore
 				}
-				countI := getRecurrenceCount(groupedCards[i])
-				countJ := getRecurrenceCount(groupedCards[j])
+				countI := getRecurrenceCount(initialCards[i])
+				countJ := getRecurrenceCount(initialCards[j])
 				return countI > countJ
 			})
+		}
 
-			// Save to cache if requested
-			if cacheFile != "" {
-				if data, err := json.MarshalIndent(groupedCards, "", "  "); err == nil {
-					if err := os.WriteFile(cacheFile, data, 0644); err == nil {
-						fmt.Printf("💾 Saved %d cards to cache: %s\n", len(groupedCards), cacheFile)
-					}
-				}
-			}
+		// Launch the streaming TUI
+		// - If cache provided: starts with cached cards, no streaming
+		// - Otherwise: starts empty and streams cards as they arrive
+		var brokerForTUI contracts.MessageBroker
+		if len(initialCards) == 0 {
+			// Streaming mode: pass broker to TUI for live updates
+			brokerForTUI = msgBroker
+			fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
+		} else {
+			// Cache mode: no streaming, use pre-loaded cards
+			fmt.Println("🚀 Launching TUI with cached data...")
 		}
 
 		// Brief pause to ensure any remaining log output completes before TUI starts
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 
-		// Launch the TUI
-		if err := tui.Start(groupedCards); err != nil {
+		if err := tui.StartWithBroker(brokerForTUI, initialCards); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
 		}
+
+		// Save to cache after TUI exits (if streaming mode and cache flag set)
+		// Note: This would require the TUI to return the final cards, which we don't do yet
+		// For now, cache is only used for loading, not saving in streaming mode
 	},
 }
 
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
 // The agents run indefinitely until the broker is closed.
-// In --wait mode (TUI), uses silent logger to prevent log output from interfering with the display.
+// In TUI mode (default), uses silent logger to prevent log output from interfering with the display.
 func startStreamPipeline() {
 	// Choose logger based on mode:
-	// - Silent logger in --wait mode (prevents log pollution in TUI)
-	// - Console logger in normal mode (useful for debugging and monitoring)
+	// - Silent logger in TUI mode (prevents log pollution)
+	// - Console logger in detach mode (useful for debugging and monitoring)
 	var log logger.Logger
-	if isWaitMode {
-		log = logger.NewSilentLogger()
-	} else {
+	if isDetachMode {
 		log = logger.NewConsoleLogger()
+	} else {
+		log = logger.NewSilentLogger()
 	}
 
 	// Start Ingestion Agent as a persistent goroutine
@@ -367,8 +352,8 @@ func startStreamPipeline() {
 		}
 	}()
 
-	// Only log pipeline start in non-wait mode
-	if !isWaitMode {
+	// Only log pipeline start in detach mode (TUI mode needs quiet startup)
+	if isDetachMode {
 		log.Info("[Pipeline] Stream processing pipeline started")
 	}
 }
@@ -377,8 +362,8 @@ func init() {
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(buildCmd)
 
-	// Add --wait flag to build command
-	buildCmd.Flags().BoolP("wait", "w", false, "Wait for pipeline to complete and launch TUI (required for in-memory broker)")
+	// Add --detach flag to build command (TUI is now the default)
+	buildCmd.Flags().BoolP("detach", "d", false, "Detach mode: submit request and exit without launching TUI")
 	// Add --cache flag for faster iteration during development
 	buildCmd.Flags().StringP("cache", "c", "", "Cache file path to save/load triage cards (speeds up iteration)")
 }

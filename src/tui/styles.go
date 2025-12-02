@@ -7,6 +7,8 @@ type StyleConfig struct {
 	// Primary colors
 	PrimaryBlue    lipgloss.Color
 	AccentBlue     lipgloss.Color
+	AccentYellow   lipgloss.Color
+	AccentGreen    lipgloss.Color
 	DarkBackground lipgloss.Color
 	CardBackground lipgloss.Color
 	TextPrimary    lipgloss.Color
@@ -27,6 +29,8 @@ func DefaultStyles() *StyleConfig {
 	return &StyleConfig{
 		PrimaryBlue:     lipgloss.Color("#8AB4F8"),
 		AccentBlue:      lipgloss.Color("#4285F4"),
+		AccentYellow:    lipgloss.Color("#FBBC04"),
+		AccentGreen:     lipgloss.Color("#34A853"),
 		DarkBackground:  lipgloss.Color("#1E1E1E"),
 		CardBackground:  lipgloss.Color("#2D2D2D"),
 		TextPrimary:     lipgloss.Color("#E8EAED"),
