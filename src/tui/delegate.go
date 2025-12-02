@@ -116,22 +116,21 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	rankCol := fmt.Sprintf(rankFmt, entry.Rank)                                         // dynamic width, right aligned
 	confCol := fmt.Sprintf("%-3s", fmt.Sprintf("%.2f", entry.Card.ConfidenceScore)[1:]) // 4 chars, left aligned, decimal point on left (.95)
 	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence())                            // dynamic width, right aligned
-	hashCol := TruncateAndPad(entry.Card.MessageHash, 5, false)                         // First 5 chars, no ellipsis
 
 	// Calculate available width for snippet
-	// Fixed columns: rank + conf (3) + recurrence + hash (5) + separators (12)
-	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 5 + 12
+	// Fixed columns: rank + conf (3) + recurrence + separators (9)
+	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 9
 	availableWidth := m.Width() - fixedWidth - listRenderingOverhead
 
 	var snippet string
 	if availableWidth > 0 {
-		// Get snippet text - use Message, or fall back to PreContext/PostContext
+		// Get snippet text - use RawMessage, or fall back to Message/PreContext/PostContext
 		snippetText := getSnippetText(entry)
 		snippet = TruncateAndPad(snippetText, availableWidth, true)
 	}
 
-	line := fmt.Sprintf("%s │ %s │ %s │ %s │ %s",
-		rankCol, confCol, recurCol, hashCol, snippet)
+	line := fmt.Sprintf("%s │ %s │ %s │ %s",
+		rankCol, confCol, recurCol, snippet)
 
 	style := lipgloss.NewStyle().Foreground(d.styles.TextSecondary)
 	if isSelected {

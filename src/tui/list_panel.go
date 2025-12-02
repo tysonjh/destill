@@ -24,7 +24,7 @@ func (m MainModel) renderListPanel(width, height int) string {
 	recurHeader := fmt.Sprintf("%*s", delegate.RecurWidth, "Rc")
 
 	// Truncate to width-4 to account for padding (2 chars)
-	headerText := fmt.Sprintf("%s │ Conf │ %s │ Hash  │ Message", rankHeader, recurHeader)
+	headerText := fmt.Sprintf("%s │ Conf │ %s │ Message", rankHeader, recurHeader)
 	truncatedHeaderText := Truncate(headerText, width-4, true)
 	headerRow := lipgloss.NewStyle().
 		Foreground(m.styles.PrimaryBlue).
