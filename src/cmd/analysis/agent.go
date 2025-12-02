@@ -127,8 +127,8 @@ func (a *Agent) processLogChunk(message []byte) {
 	const preContextSize = 5
 	preBuffer := make([]string, 0, preContextSize)
 
-	// Track stats for this chunk
-	var publishedCount, droppedCount int
+	// Track published count for logging
+	var publishedCount int
 
 	// Process each line independently
 	for lineNum, line := range lines {
@@ -161,15 +161,8 @@ func (a *Agent) processLogChunk(message []byte) {
 		// Calculate message hash for recurrence tracking
 		messageHash := a.calculateMessageHash(normalizedMessage)
 
-		// Calculate confidence score
+		// Calculate confidence score (filtering is done by downstream consumers)
 		confidenceScore := a.calculateConfidenceScore(trimmedLine)
-
-		// FILTER: Only create triage cards for high-confidence failures
-		// Minimum threshold of 0.80 to reduce noise significantly
-		if confidenceScore < 0.80 {
-			droppedCount++
-			continue
-		}
 
 		// Extract context lines for expandable view
 		// Use rolling buffer for pre-context (already in memory)
@@ -229,21 +222,8 @@ func (a *Agent) processLogChunk(message []byte) {
 		}
 	}
 
-	// Publish stats for this chunk
-	stats := contracts.AnalysisStats{
-		RequestID: logChunk.RequestID,
-		JobName:   logChunk.JobName,
-		Published: publishedCount,
-		Dropped:   droppedCount,
-	}
-	if statsData, err := json.Marshal(stats); err == nil {
-		if err := a.msgBroker.Publish("ci_analysis_stats", statsData); err != nil {
-			a.logger.Error("[AnalysisAgent] Error publishing stats: %v", err)
-		}
-	}
-
-	a.logger.Info("[AnalysisAgent] Completed chunk %s: %d published, %d dropped",
-		logChunk.ID, publishedCount, droppedCount)
+	a.logger.Info("[AnalysisAgent] Completed chunk %s: %d cards published",
+		logChunk.ID, publishedCount)
 }
 
 // normalizeLog performs comprehensive log normalization for recurrence tracking.

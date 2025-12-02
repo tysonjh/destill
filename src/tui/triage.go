@@ -32,10 +32,9 @@ type pipelineErrorMsg struct {
 	err error
 }
 
-// statsReceivedMsg is sent when analysis stats arrive from the broker
-type statsReceivedMsg struct {
-	stats contracts.AnalysisStats
-}
+// ConfidenceThreshold is the minimum confidence score for displaying cards
+// Cards below this threshold are counted as "dropped" but not shown
+const ConfidenceThreshold = 0.80
 
 // MainModel is the main Bubble Tea model for the application.
 type MainModel struct {
@@ -54,11 +53,10 @@ type MainModel struct {
 	// Streaming support
 	broker         contracts.MessageBroker
 	cardChan       <-chan []byte    // Channel receiving cards from broker
-	statsChan      <-chan []byte    // Channel receiving stats from broker
 	pendingCards   []Item           // Cards waiting to be merged
 	hashMap        map[string]*Item // For grouping by hash
 	status         LoadStatus       // Current loading status
-	cardCount      int              // Total cards received
+	cardCount      int              // Total cards received (above threshold)
 	droppedCount   int              // Cards dropped due to low confidence
 	jobsDiscovered map[string]bool  // Jobs we've seen so far
 }
@@ -113,14 +111,10 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 	listView.SetItems(items)
 
 	// Subscribe to broker if provided
-	var cardChan, statsChan <-chan []byte
+	var cardChan <-chan []byte
 	if broker != nil {
 		var err error
 		cardChan, err = broker.Subscribe("ci_failures_ranked")
-		if err != nil {
-			return err
-		}
-		statsChan, err = broker.Subscribe("ci_analysis_stats")
 		if err != nil {
 			return err
 		}
@@ -135,7 +129,6 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 		ready:          false,
 		broker:         broker,
 		cardChan:       cardChan,
-		statsChan:      statsChan,
 		pendingCards:   nil,
 		hashMap:        hashMap,
 		status:         status,
@@ -174,16 +167,11 @@ func hashMapToSortedItems(hashMap map[string]*Item) []Item {
 
 // Init initializes the model
 func (m MainModel) Init() tea.Cmd {
-	var cmds []tea.Cmd
 	if m.cardChan != nil {
 		// Start listening for cards from broker
-		cmds = append(cmds, listenForCards(m.cardChan))
+		return listenForCards(m.cardChan)
 	}
-	if m.statsChan != nil {
-		// Start listening for stats from broker
-		cmds = append(cmds, listenForStats(m.statsChan))
-	}
-	return tea.Batch(cmds...)
+	return nil
 }
 
 // listenForCards returns a command that waits for the next card from the broker
@@ -203,23 +191,6 @@ func listenForCards(cardChan <-chan []byte) tea.Cmd {
 	}
 }
 
-// listenForStats returns a command that waits for stats from the broker
-func listenForStats(statsChan <-chan []byte) tea.Cmd {
-	return func() tea.Msg {
-		data, ok := <-statsChan
-		if !ok {
-			// Channel closed
-			return nil
-		}
-
-		var stats contracts.AnalysisStats
-		if err := json.Unmarshal(data, &stats); err != nil {
-			return nil // Silently ignore malformed stats
-		}
-		return statsReceivedMsg{stats: stats}
-	}
-}
-
 // Update handles messages and updates the model
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -227,35 +198,30 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case cardReceivedMsg:
-		// New card arrived from broker - add to pending
-		m.cardCount++
-		item := Item{Card: msg.card, Rank: 0}
-		m.pendingCards = append(m.pendingCards, item)
-
-		// Track new jobs
+		// New card arrived from broker - filter by confidence threshold
+		// Track new jobs regardless of confidence
 		if !m.jobsDiscovered[msg.card.JobName] {
 			m.jobsDiscovered[msg.card.JobName] = true
 			m.header.AddJob(msg.card.JobName)
 		}
 
-		// Update header with pending count
-		m.header.SetPendingCount(len(m.pendingCards))
+		// Filter by confidence threshold
+		if msg.card.ConfidenceScore < ConfidenceThreshold {
+			m.droppedCount++
+			m.header.SetDroppedCount(m.droppedCount)
+		} else {
+			// Card meets threshold - add to pending
+			m.cardCount++
+			item := Item{Card: msg.card, Rank: 0}
+			m.pendingCards = append(m.pendingCards, item)
+			m.header.SetPendingCount(len(m.pendingCards))
+		}
+
 		m.header.SetLoadStatus(m.status, m.cardCount, len(m.jobsDiscovered))
 
 		// Keep listening for more cards
 		if m.cardChan != nil {
 			cmds = append(cmds, listenForCards(m.cardChan))
-		}
-		return m, tea.Batch(cmds...)
-
-	case statsReceivedMsg:
-		// Stats arrived from analysis agent - accumulate dropped count
-		m.droppedCount += msg.stats.Dropped
-		m.header.SetDroppedCount(m.droppedCount)
-
-		// Keep listening for more stats
-		if m.statsChan != nil {
-			cmds = append(cmds, listenForStats(m.statsChan))
 		}
 		return m, tea.Batch(cmds...)
 
