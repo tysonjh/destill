@@ -18,11 +18,11 @@ type Header struct {
 	styles             *StyleConfig
 
 	// Streaming status
-	loadStatus   LoadStatus
-	cardCount    int
-	droppedCount int
-	jobCount     int
-	pendingCount int
+	loadStatus         LoadStatus
+	cardCount          int
+	lowConfidenceCount int
+	jobCount           int
+	pendingCount       int
 }
 
 // NewHeaderWithStyles creates a new header with custom styles
@@ -89,9 +89,9 @@ func (h *Header) SetPendingCount(count int) {
 	h.pendingCount = count
 }
 
-// SetDroppedCount updates the dropped cards count
-func (h *Header) SetDroppedCount(count int) {
-	h.droppedCount = count
+// SetLowConfidenceCount updates the low confidence cards count
+func (h *Header) SetLowConfidenceCount(count int) {
+	h.lowConfidenceCount = count
 }
 
 // AddJob adds a new job to the available jobs list
@@ -128,8 +128,12 @@ func (h Header) Render(width int) string {
 	}
 
 	statusText := fmt.Sprintf("%s %s", statusIcon, h.projectStatus)
-	if h.cardCount > 0 || h.droppedCount > 0 {
-		statusText = fmt.Sprintf("%s (%d cards, %d dropped, %d jobs)", statusText, h.cardCount, h.droppedCount, h.jobCount)
+	if h.cardCount > 0 {
+		if h.lowConfidenceCount > 0 {
+			statusText = fmt.Sprintf("%s (%d cards, %d low conf, %d jobs)", statusText, h.cardCount, h.lowConfidenceCount, h.jobCount)
+		} else {
+			statusText = fmt.Sprintf("%s (%d cards, %d jobs)", statusText, h.cardCount, h.jobCount)
+		}
 	}
 	status := statusStyle.Render(statusText)
 

@@ -32,8 +32,8 @@ type pipelineErrorMsg struct {
 	err error
 }
 
-// ConfidenceThreshold is the minimum confidence score for displaying cards
-// Cards below this threshold are counted as "dropped" but not shown
+// ConfidenceThreshold is the threshold for "high confidence" cards
+// Cards below this are shown dimmed but still included
 const ConfidenceThreshold = 0.80
 
 // MainModel is the main Bubble Tea model for the application.
@@ -198,25 +198,25 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case cardReceivedMsg:
-		// New card arrived from broker - filter by confidence threshold
-		// Track new jobs regardless of confidence
+		// New card arrived from broker - include all cards (low confidence shown dimmed)
+		m.cardCount++
+
+		// Track low confidence count for display
+		if msg.card.ConfidenceScore < ConfidenceThreshold {
+			m.droppedCount++ // Now means "low confidence" not "dropped"
+			m.header.SetLowConfidenceCount(m.droppedCount)
+		}
+
+		// Track new jobs
 		if !m.jobsDiscovered[msg.card.JobName] {
 			m.jobsDiscovered[msg.card.JobName] = true
 			m.header.AddJob(msg.card.JobName)
 		}
 
-		// Filter by confidence threshold
-		if msg.card.ConfidenceScore < ConfidenceThreshold {
-			m.droppedCount++
-			m.header.SetDroppedCount(m.droppedCount)
-		} else {
-			// Card meets threshold - add to pending
-			m.cardCount++
-			item := Item{Card: msg.card, Rank: 0}
-			m.pendingCards = append(m.pendingCards, item)
-			m.header.SetPendingCount(len(m.pendingCards))
-		}
-
+		// Add card to pending
+		item := Item{Card: msg.card, Rank: 0}
+		m.pendingCards = append(m.pendingCards, item)
+		m.header.SetPendingCount(len(m.pendingCards))
 		m.header.SetLoadStatus(m.status, m.cardCount, len(m.jobsDiscovered))
 
 		// Keep listening for more cards

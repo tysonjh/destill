@@ -139,9 +139,17 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	line := fmt.Sprintf("%s │ %s │ %s │ %s",
 		rankCol, confCol, recurCol, snippet)
 
-	style := lipgloss.NewStyle().Foreground(d.styles.TextSecondary)
+	// Style based on confidence and selection
+	// Low confidence cards (< 0.80) are dimmed
+	isLowConfidence := entry.Card.ConfidenceScore < 0.80
+
+	style := lipgloss.NewStyle()
 	if isSelected {
 		style = style.Bold(true).Foreground(d.styles.PrimaryBlue).Background(d.styles.SelectedColor)
+	} else if isLowConfidence {
+		style = style.Foreground(d.styles.TextSecondary).Faint(true)
+	} else {
+		style = style.Foreground(d.styles.TextSecondary)
 	}
 
 	fmt.Fprint(w, style.Render(line))
