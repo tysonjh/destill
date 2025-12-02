@@ -18,10 +18,10 @@ type Header struct {
 	styles             *StyleConfig
 
 	// Streaming status
-	loadStatus    LoadStatus
-	cardCount     int
-	jobCount      int
-	pendingCount  int
+	loadStatus   LoadStatus
+	cardCount    int
+	jobCount     int
+	pendingCount int
 }
 
 // NewHeaderWithStyles creates a new header with custom styles

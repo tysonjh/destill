@@ -47,13 +47,13 @@ type MainModel struct {
 	ready          bool
 
 	// Streaming support
-	broker        contracts.MessageBroker
-	cardChan      <-chan []byte      // Channel receiving cards from broker
-	pendingCards  []Item             // Cards waiting to be merged
-	hashMap       map[string]*Item   // For grouping by hash
-	status        LoadStatus         // Current loading status
-	cardCount     int                // Total cards received
-	jobsDiscovered map[string]bool   // Jobs we've seen so far
+	broker         contracts.MessageBroker
+	cardChan       <-chan []byte    // Channel receiving cards from broker
+	pendingCards   []Item           // Cards waiting to be merged
+	hashMap        map[string]*Item // For grouping by hash
+	status         LoadStatus       // Current loading status
+	cardCount      int              // Total cards received
+	jobsDiscovered map[string]bool  // Jobs we've seen so far
 }
 
 // Start initializes and runs the TUI with the provided triage cards (legacy mode).
@@ -116,19 +116,19 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 	}
 
 	model := MainModel{
-		header:          header,
-		listView:        listView,
-		items:           items,
-		styles:          styles,
-		detailViewport:  viewport.New(0, 0),
-		ready:           false,
-		broker:          broker,
-		cardChan:        cardChan,
-		pendingCards:    nil,
-		hashMap:         hashMap,
-		status:          status,
-		cardCount:       len(initialCards),
-		jobsDiscovered:  jobsDiscovered,
+		header:         header,
+		listView:       listView,
+		items:          items,
+		styles:         styles,
+		detailViewport: viewport.New(0, 0),
+		ready:          false,
+		broker:         broker,
+		cardChan:       cardChan,
+		pendingCards:   nil,
+		hashMap:        hashMap,
+		status:         status,
+		cardCount:      len(initialCards),
+		jobsDiscovered: jobsDiscovered,
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen())

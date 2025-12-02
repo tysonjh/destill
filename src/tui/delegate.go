@@ -113,7 +113,7 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	rankFmt := fmt.Sprintf("%%%dd", d.RankWidth)   // e.g., "%3d" for 3-digit width
 	recurFmt := fmt.Sprintf("%%%dd", d.RecurWidth) // e.g., "%4d" for 4-digit width
 
-	rankCol := fmt.Sprintf(rankFmt, entry.Rank)      // dynamic width, right aligned
+	rankCol := fmt.Sprintf(rankFmt, entry.Rank)              // dynamic width, right aligned
 	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence()) // dynamic width, right aligned
 
 	// Format confidence score: show ".95" for < 1.0, "1.0" for 1.0
