@@ -32,6 +32,11 @@ type pipelineErrorMsg struct {
 	err error
 }
 
+// statsReceivedMsg is sent when analysis stats arrive from the broker
+type statsReceivedMsg struct {
+	stats contracts.AnalysisStats
+}
+
 // MainModel is the main Bubble Tea model for the application.
 type MainModel struct {
 	header         Header
@@ -49,10 +54,12 @@ type MainModel struct {
 	// Streaming support
 	broker         contracts.MessageBroker
 	cardChan       <-chan []byte    // Channel receiving cards from broker
+	statsChan      <-chan []byte    // Channel receiving stats from broker
 	pendingCards   []Item           // Cards waiting to be merged
 	hashMap        map[string]*Item // For grouping by hash
 	status         LoadStatus       // Current loading status
 	cardCount      int              // Total cards received
+	droppedCount   int              // Cards dropped due to low confidence
 	jobsDiscovered map[string]bool  // Jobs we've seen so far
 }
 
@@ -106,10 +113,14 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 	listView.SetItems(items)
 
 	// Subscribe to broker if provided
-	var cardChan <-chan []byte
+	var cardChan, statsChan <-chan []byte
 	if broker != nil {
 		var err error
 		cardChan, err = broker.Subscribe("ci_failures_ranked")
+		if err != nil {
+			return err
+		}
+		statsChan, err = broker.Subscribe("ci_analysis_stats")
 		if err != nil {
 			return err
 		}
@@ -124,10 +135,12 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 		ready:          false,
 		broker:         broker,
 		cardChan:       cardChan,
+		statsChan:      statsChan,
 		pendingCards:   nil,
 		hashMap:        hashMap,
 		status:         status,
 		cardCount:      len(initialCards),
+		droppedCount:   0,
 		jobsDiscovered: jobsDiscovered,
 	}
 
@@ -161,11 +174,16 @@ func hashMapToSortedItems(hashMap map[string]*Item) []Item {
 
 // Init initializes the model
 func (m MainModel) Init() tea.Cmd {
+	var cmds []tea.Cmd
 	if m.cardChan != nil {
 		// Start listening for cards from broker
-		return listenForCards(m.cardChan)
+		cmds = append(cmds, listenForCards(m.cardChan))
 	}
-	return nil
+	if m.statsChan != nil {
+		// Start listening for stats from broker
+		cmds = append(cmds, listenForStats(m.statsChan))
+	}
+	return tea.Batch(cmds...)
 }
 
 // listenForCards returns a command that waits for the next card from the broker
@@ -182,6 +200,23 @@ func listenForCards(cardChan <-chan []byte) tea.Cmd {
 			return pipelineErrorMsg{err: err}
 		}
 		return cardReceivedMsg{card: card}
+	}
+}
+
+// listenForStats returns a command that waits for stats from the broker
+func listenForStats(statsChan <-chan []byte) tea.Cmd {
+	return func() tea.Msg {
+		data, ok := <-statsChan
+		if !ok {
+			// Channel closed
+			return nil
+		}
+
+		var stats contracts.AnalysisStats
+		if err := json.Unmarshal(data, &stats); err != nil {
+			return nil // Silently ignore malformed stats
+		}
+		return statsReceivedMsg{stats: stats}
 	}
 }
 
@@ -210,6 +245,17 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Keep listening for more cards
 		if m.cardChan != nil {
 			cmds = append(cmds, listenForCards(m.cardChan))
+		}
+		return m, tea.Batch(cmds...)
+
+	case statsReceivedMsg:
+		// Stats arrived from analysis agent - accumulate dropped count
+		m.droppedCount += msg.stats.Dropped
+		m.header.SetDroppedCount(m.droppedCount)
+
+		// Keep listening for more stats
+		if m.statsChan != nil {
+			cmds = append(cmds, listenForStats(m.statsChan))
 		}
 		return m, tea.Batch(cmds...)
 

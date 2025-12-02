@@ -47,6 +47,18 @@ type LogChunk struct {
 	Metadata map[string]string `json:"metadata"`
 }
 
+// AnalysisStats contains statistics from processing a log chunk.
+type AnalysisStats struct {
+	// Original request ID
+	RequestID string `json:"request_id"`
+	// Job that was analyzed
+	JobName string `json:"job_name"`
+	// Number of cards published (confidence >= 0.80)
+	Published int `json:"published"`
+	// Number of cards dropped (confidence < 0.80)
+	Dropped int `json:"dropped"`
+}
+
 // MessageBroker defines the interface for communication between agents.
 // Implementations simulate a Kafka-like API for local development.
 type MessageBroker interface {

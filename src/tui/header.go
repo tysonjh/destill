@@ -20,6 +20,7 @@ type Header struct {
 	// Streaming status
 	loadStatus   LoadStatus
 	cardCount    int
+	droppedCount int
 	jobCount     int
 	pendingCount int
 }
@@ -88,6 +89,11 @@ func (h *Header) SetPendingCount(count int) {
 	h.pendingCount = count
 }
 
+// SetDroppedCount updates the dropped cards count
+func (h *Header) SetDroppedCount(count int) {
+	h.droppedCount = count
+}
+
 // AddJob adds a new job to the available jobs list
 func (h *Header) AddJob(jobName string) {
 	// Check if already exists
@@ -122,8 +128,8 @@ func (h Header) Render(width int) string {
 	}
 
 	statusText := fmt.Sprintf("%s %s", statusIcon, h.projectStatus)
-	if h.cardCount > 0 {
-		statusText = fmt.Sprintf("%s (%d cards, %d jobs)", statusText, h.cardCount, h.jobCount)
+	if h.cardCount > 0 || h.droppedCount > 0 {
+		statusText = fmt.Sprintf("%s (%d cards, %d dropped, %d jobs)", statusText, h.cardCount, h.droppedCount, h.jobCount)
 	}
 	status := statusStyle.Render(statusText)
 
