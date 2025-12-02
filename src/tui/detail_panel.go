@@ -48,8 +48,13 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	}
 
 	// Error Message (Highlight) - clean and wrap before styling
+	// Use RawMessage for display (actual values), fall back to Message (normalized) for backwards compat
 	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.ErrorForeground).Bold(true).Render("ERROR:"))
-	cleanMessage := CleanLogText(item.Card.Message)
+	displayMessage := item.Card.RawMessage
+	if displayMessage == "" {
+		displayMessage = item.Card.Message // Fall back to normalized if no raw message
+	}
+	cleanMessage := CleanLogText(displayMessage)
 	wrappedError := Wrap(cleanMessage, maxWidth)
 	fmt.Fprint(&content, lipgloss.NewStyle().
 		Foreground(m.styles.ErrorForeground).

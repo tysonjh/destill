@@ -50,12 +50,6 @@ var (
 	// Sequence numbers and incremental IDs: seq=123, id=456
 	sequencePattern = regexp.MustCompile(`(?i)\b(seq|sequence|id|index|count)[\s=:]*\d+\b`)
 
-	// Log line numbers (not source code line numbers)
-	// Only matches when immediately after [TIMESTAMP] placeholder to be conservative
-	// Matches patterns like: [TIMESTAMP],335]: or [TIMESTAMP],784 -
-	// Does NOT match standalone ,335 which might be important data
-	logLineNumberPattern = regexp.MustCompile(`\[TIMESTAMP\],\d+[]:-]`)
-
 	// High-signal anchor pattern: severity keywords appearing near the start of the line
 	// with a separator (e.g., "ERROR:", "FATAL |", "ERROR]")
 	// Character class: ] at start, - at end to avoid escaping issues
@@ -195,6 +189,7 @@ func (a *Agent) processLogChunk(message []byte) {
 			Timestamp:       time.Now().Format(time.RFC3339),
 			Severity:        severity,
 			Message:         normalizedMessage,
+			RawMessage:      trimmedLine,
 			Metadata:        metadata,
 			RequestID:       logChunk.RequestID,
 			MessageHash:     messageHash,
@@ -255,26 +250,21 @@ func (a *Agent) normalizeLog(content string) string {
 	// Step 6: Remove port numbers (often dynamic)
 	normalized = portPattern.ReplaceAllString(normalized, ":[PORT]")
 
-	// Step 7: Remove log file line numbers (e.g., ,335]: or ,784 -)
-	// These are just positions in the log file, not useful for grouping
-	// Preserves source code line numbers like lineno:123 which are valuable for debugging
-	normalized = logLineNumberPattern.ReplaceAllString(normalized, "[LINE]")
-
-	// Step 8: Remove sequence numbers and incremental IDs
+	// Step 7: Remove sequence numbers and incremental IDs
 	normalized = sequencePattern.ReplaceAllString(normalized, "[SEQ]")
 
-	// Step 9: Normalize whitespace - replace multiple spaces/tabs/newlines with single space
+	// Step 8: Normalize whitespace - replace multiple spaces/tabs/newlines with single space
 	normalized = regexp.MustCompile(`\s+`).ReplaceAllString(normalized, " ")
 
-	// Step 10: Convert to lowercase for case-insensitive matching
+	// Step 9: Convert to lowercase for case-insensitive matching
 	normalized = strings.ToLower(normalized)
 
-	// Step 11: Heuristic Skeletonization (Digit Sweeper)
+	// Step 10: Heuristic Skeletonization (Digit Sweeper)
 	// Aggressively replace any remaining words containing digits with [VAR]
 	// This catches unknown variable formats like "user_123", "v2.5", "module_55"
 	normalized = mixedAlphaNumericPattern.ReplaceAllString(normalized, "[var]")
 
-	// Step 12: Trim leading/trailing whitespace
+	// Step 11: Trim leading/trailing whitespace
 	normalized = strings.TrimSpace(normalized)
 
 	return normalized

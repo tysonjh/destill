@@ -11,8 +11,10 @@ type TriageCard struct {
 	Timestamp string `json:"timestamp"`
 	// Log level (e.g., INFO, WARN, ERROR).
 	Severity string `json:"severity"`
-	// Log message content.
+	// Normalized log message (placeholders like [TIMESTAMP], [IP], [VAR] for grouping/hashing).
 	Message string `json:"message"`
+	// Original raw log message (for display to humans with actual values).
+	RawMessage string `json:"raw_message,omitempty"`
 	// Additional key-value pairs associated with the log.
 	Metadata map[string]string `json:"metadata"`
 	// Original analysis request (e.g., the Build ID from BuildKite).
