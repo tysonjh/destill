@@ -64,9 +64,18 @@ func (d Delegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 }
 
 // getSnippetText returns the best text to show in the list snippet.
-// It prefers Message, but falls back to PreContext or PostContext if Message is empty.
+// It prefers RawMessage (original), falls back to Message (normalized),
+// then to PreContext or PostContext if both are empty.
 func getSnippetText(entry Item) string {
-	// Try Message first - clean Buildkite escape sequences and check if meaningful
+	// Try RawMessage first (original with actual values)
+	if entry.Card.RawMessage != "" {
+		cleanMsg := CleanLogText(entry.Card.RawMessage)
+		if strings.TrimSpace(cleanMsg) != "" {
+			return cleanMsg
+		}
+	}
+
+	// Fall back to Message (normalized) for backwards compatibility
 	cleanMsg := CleanLogText(entry.Card.Message)
 	if strings.TrimSpace(cleanMsg) != "" {
 		return cleanMsg
