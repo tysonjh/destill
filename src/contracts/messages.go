@@ -60,6 +60,16 @@ type AnalysisRequest struct {
 	Timestamp string `json:"timestamp"`
 }
 
+// RequestStatus represents the status of an analysis request.
+type RequestStatus struct {
+	RequestID       string
+	BuildURL        string
+	Status          string // pending, processing, completed, failed
+	ChunksTotal     int
+	ChunksProcessed int
+	FindingsCount   int
+}
+
 // TopicNames defines the Redpanda topic names used in the agentic architecture
 const (
 	// TopicLogsRaw contains raw log chunks (~500KB each)
