@@ -16,30 +16,30 @@ This document outlines the phased migration from a monolithic Go binary with in-
 │                            Agentic Data Plane                                    │
 ├──────────────────────────────────────────────────────────────────────────────────┤
 │                                                                                  │
-│  ┌──────────────┐      ┌─────────────────┐      ┌──────────────┐                │
-│  │   destill    │      │    Redpanda     │      │   destill    │                │
-│  │   ingest     │─────▶│ destill.logs.raw│─────▶│   analyze    │                │
-│  └──────────────┘      └─────────────────┘      │  (stateless) │                │
-│                              (ephemeral)        └──────┬───────┘                │
+│  ┌──────────────┐      ┌─────────────────┐      ┌──────────────┐                 │
+│  │   destill    │      │    Redpanda     │      │   destill    │                 │
+│  │   ingest     │─────▶│ destill.logs.raw│─────▶│   analyze    │                 │
+│  └──────────────┘      └─────────────────┘      │  (stateless) │                 │
+│                              (ephemeral)        └──────┬───────┘                 │
 │                                                        │                         │
 │                                                        │ findings                │
 │                                                        ▼                         │
-│                                                 ┌─────────────────┐             │
-│  ┌──────────────────────────┐                   │    Redpanda     │             │
-│  │       Postgres           │◀──────────────────│    destill.     │             │
-│  │  ┌──────────────────┐    │   Redpanda        │    analysis.    │             │
-│  │  │    findings      │    │   Connect         │    findings     │             │
-│  │  │    (JSONB)       │    │   (Benthos)       └─────────────────┘             │
-│  │  └──────────────────┘    │                                                   │
-│  └──────────────────────────┘                                                   │
+│                                                 ┌─────────────────┐              │
+│  ┌──────────────────────────┐                   │    Redpanda     │              │
+│  │       Postgres           │◀──────────────────│    destill.     │              │
+│  │  ┌──────────────────┐    │   Redpanda        │    analysis.    │              │
+│  │  │    findings      │    │   Connect         │    findings     │              │
+│  │  │    (JSONB)       │    │   (Benthos)       └─────────────────┘              │
+│  │  └──────────────────┘    │                                                    │
+│  └──────────────────────────┘                                                    │
 │              ▲                                                                   │
 │              │                                                                   │
-│  ┌───────────┴──────────────┐                                                   │
-│  │      destill view        │                                                   │
-│  │      <request-id>        │                                                   │
-│  └──────────────────────────┘                                                   │
+│  ┌───────────┴──────────────┐                                                    │
+│  │      destill view        │                                                    │
+│  │      <request-id>        │                                                    │
+│  └──────────────────────────┘                                                    │
 │                                                                                  │
-│  Note: Raw logs (destill.logs.raw) are ephemeral - NOT stored in Postgres.      │
+│  Note: Raw logs (destill.logs.raw) are ephemeral - NOT stored in Postgres.       │
 │        Only analysis findings are persisted.                                     │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -429,17 +429,17 @@ func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadat
 │         │                                                       │
 │         ▼                                                       │
 │  3. For each job in build:                                      │
-│     ┌───────────────────────────────────────────────────────┐  │
-│     │  a. Fetch job log                                      │  │
-│     │         │                                              │  │
-│     │         ▼                                              │  │
-│     │  b. Chunk log into ~500KB pieces                       │  │
-│     │         │                                              │  │
-│     │         ▼                                              │  │
-│     │  c. Publish each chunk to destill.logs.raw             │  │
-│     │     Key: {build_id}                                    │  │
-│     │     Value: LogChunk JSON                               │  │
-│     └───────────────────────────────────────────────────────┘  │
+│     ┌───────────────────────────────────────────────────────┐   │
+│     │  a. Fetch job log                                     │   │
+│     │         │                                             │   │
+│     │         ▼                                             │   │
+│     │  b. Chunk log into ~500KB pieces                      │   │
+│     │         │                                             │   │
+│     │         ▼                                             │   │
+│     │  c. Publish each chunk to destill.logs.raw            │   │
+│     │     Key: {build_id}                                   │   │
+│     │     Value: LogChunk JSON                              │   │
+│     └───────────────────────────────────────────────────────┘   │
 │                                                                 │
 │  4. Publish completion marker                                   │
 │                                                                 │
@@ -467,41 +467,41 @@ func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadat
 #### 4.1 Stateless Analysis Design
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Analyze Agent (Stateless)                    │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  Consumer Group: destill-analyze                                │
-│  Input Topic: destill.logs.raw                                  │
-│  Output Topic: destill.analysis.findings                        │
-│                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐ │
-│  │                  Process Single Chunk                      │ │
-│  │                                                            │ │
-│  │  1. Deserialize LogChunk                                   │ │
-│  │         │                                                  │ │
-│  │         ▼                                                  │ │
-│  │  2. Split content into lines (in memory)                   │ │
-│  │         │                                                  │ │
-│  │         ▼                                                  │ │
-│  │  3. For each line:                                         │ │
-│  │     ┌────────────────────────────────────────────────────┐│ │
-│  │     │  a. Detect severity (ERROR, FATAL, etc.)           ││ │
-│  │     │  b. Skip if not error-like                         ││ │
-│  │     │  c. Calculate confidence score                      ││ │
-│  │     │  d. If match:                                       ││ │
-│  │     │     - Extract 15 lines before (from THIS chunk)     ││ │
-│  │     │     - Extract 30 lines after (from THIS chunk)      ││ │
-│  │     │     - Normalize message, calculate hash             ││ │
-│  │     │     - Create TriageCard                             ││ │
-│  │     │     - Publish to destill.analysis.findings          ││ │
-│  │     └────────────────────────────────────────────────────┘│ │
-│  │                                                            │ │
-│  │  Note: Context may be truncated at chunk boundaries.       │ │
-│  │  This is acceptable for PoC - we get "best effort" context.│ │
-│  └───────────────────────────────────────────────────────────┘ │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    Analyze Agent (Stateless)                     │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Consumer Group: destill-analyze                                 │
+│  Input Topic: destill.logs.raw                                   │
+│  Output Topic: destill.analysis.findings                         │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                  Process Single Chunk                      │  │
+│  │                                                            │  │
+│  │  1. Deserialize LogChunk                                   │  │
+│  │         │                                                  │  │
+│  │         ▼                                                  │  │
+│  │  2. Split content into lines (in memory)                   │  │
+│  │         │                                                  │  │
+│  │         ▼                                                  │  │
+│  │  3. For each line:                                         │  │
+│  │     ┌────────────────────────────────────────────────────┐ │  │
+│  │     │  a. Detect severity (ERROR, FATAL, etc.)           │ │  │
+│  │     │  b. Skip if not error-like                         │ │  │
+│  │     │  c. Calculate confidence score                     │ │  │
+│  │     │  d. If match:                                      │ │  │
+│  │     │     - Extract 15 lines before (from THIS chunk)    │ │  │
+│  │     │     - Extract 30 lines after (from THIS chunk)     │ │  │
+│  │     │     - Normalize message, calculate hash            │ │  │
+│  │     │     - Create TriageCard                            │ │  │
+│  │     │     - Publish to destill.analysis.findings         │ │  │
+│  │     └────────────────────────────────────────────────────┘ │  │
+│  │                                                            │  │
+│  │  Note: Context may be truncated at chunk boundaries.       │  │
+│  │  This is acceptable for PoC - we get "best effort" context.│  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 #### 4.2 TriageCard with Chunk Context
