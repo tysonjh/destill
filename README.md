@@ -158,8 +158,14 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-analyze
 
 # Agents automatically process builds as they come in
-# Findings are stored in Postgres and can be queried
-# For now, use local mode (./bin/destill build) for interactive TUI
+# Findings are stored in Postgres
+
+# Query findings from Postgres
+docker exec -it destill-postgres psql -U destill -d destill \
+  -c "SELECT severity, confidence_score, LEFT(raw_message, 80) FROM findings ORDER BY confidence_score DESC LIMIT 10;"
+
+# Or view in Redpanda Console at http://localhost:8080
+# Note: TUI integration for distributed mode is planned for a future release 
 ```
 
 **Advantages**:
