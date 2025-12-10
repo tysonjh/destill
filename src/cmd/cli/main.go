@@ -49,12 +49,12 @@ It uses a stream processing architecture with:
 			os.Exit(1)
 		}
 
-		// Initialize the broker before any command runs
-		inMemoryBroker := broker.NewInMemoryBroker()
-
 		// Check if we're in --detach mode (non-interactive)
 		detachFlag := cmd.Flags().Lookup("detach")
 		isDetachMode = detachFlag != nil && detachFlag.Value.String() == "true"
+
+		// Initialize the broker before any command runs
+		inMemoryBroker := broker.NewInMemoryBroker()
 
 		// Only enable verbose broker logging in detach mode
 		// (TUI mode needs quiet broker to prevent log interference)
@@ -62,9 +62,8 @@ It uses a stream processing architecture with:
 			inMemoryBroker.SetVerbose(true)
 		}
 
-		msgBroker = inMemoryBroker
-
-		// Start the stream pipeline (agents run as persistent goroutines)
+		// Use adapter to bridge new broker interface with legacy code
+		msgBroker = broker.NewLegacyAdapter(inMemoryBroker)
 		startStreamPipeline()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {

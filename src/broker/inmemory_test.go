@@ -1,7 +1,8 @@
-// Package broker provides implementations of the MessageBroker interface.
+// Package broker provides implementations of the Broker interface.
 package broker
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -12,23 +13,25 @@ func TestPublishDeliverToSubscriber(t *testing.T) {
 	broker := NewInMemoryBroker()
 	defer broker.Close()
 
+	ctx := context.Background()
+
 	// Subscribe to topic
-	ch, err := broker.Subscribe("test-topic")
+	ch, err := broker.Subscribe(ctx, "test-topic", "test-group")
 	if err != nil {
 		t.Fatalf("Subscribe failed: %v", err)
 	}
 
 	// Publish message
 	testMsg := []byte("hello world")
-	if err := broker.Publish("test-topic", testMsg); err != nil {
+	if err := broker.Publish(ctx, "test-topic", "key", testMsg); err != nil {
 		t.Fatalf("Publish failed: %v", err)
 	}
 
 	// Receive message with timeout
 	select {
-	case received := <-ch:
-		if string(received) != string(testMsg) {
-			t.Errorf("Expected %q, got %q", testMsg, received)
+	case msg := <-ch:
+		if string(msg.Value) != string(testMsg) {
+			t.Errorf("Expected %q, got %q", testMsg, msg.Value)
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for message")
@@ -40,27 +43,29 @@ func TestTopicIsolation(t *testing.T) {
 	broker := NewInMemoryBroker()
 	defer broker.Close()
 
+	ctx := context.Background()
+
 	// Subscribe to two different topics
-	chA, err := broker.Subscribe("topic-a")
+	chA, err := broker.Subscribe(ctx, "topic-a", "group-a")
 	if err != nil {
 		t.Fatalf("Subscribe to topic-a failed: %v", err)
 	}
-	chB, err := broker.Subscribe("topic-b")
+	chB, err := broker.Subscribe(ctx, "topic-b", "group-b")
 	if err != nil {
 		t.Fatalf("Subscribe to topic-b failed: %v", err)
 	}
 
 	// Publish to topic-a only
 	testMsg := []byte("message for topic-a")
-	if err := broker.Publish("topic-a", testMsg); err != nil {
+	if err := broker.Publish(ctx, "topic-a", "key", testMsg); err != nil {
 		t.Fatalf("Publish failed: %v", err)
 	}
 
 	// Topic A should receive message
 	select {
-	case received := <-chA:
-		if string(received) != string(testMsg) {
-			t.Errorf("Expected %q, got %q", testMsg, received)
+	case msg := <-chA:
+		if string(msg.Value) != string(testMsg) {
+			t.Errorf("Expected %q, got %q", testMsg, msg.Value)
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("Timeout waiting for message on topic-a")
@@ -69,7 +74,7 @@ func TestTopicIsolation(t *testing.T) {
 	// Topic B should NOT receive any message
 	select {
 	case msg := <-chB:
-		t.Errorf("Topic B should not receive message, but got: %q", msg)
+		t.Errorf("Topic B should not receive message, but got: %q", msg.Value)
 	case <-time.After(100 * time.Millisecond):
 		// Expected: no message received
 	}
@@ -80,6 +85,7 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 	broker := NewInMemoryBroker()
 	defer broker.Close()
 
+	ctx := context.Background()
 	const numGoroutines = 50
 	var wg sync.WaitGroup
 
@@ -90,14 +96,14 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 			go func(id int) {
 				defer wg.Done()
 				for j := 0; j < 10; j++ {
-					_ = broker.Publish("concurrent-topic", []byte("msg"))
+					_ = broker.Publish(ctx, "concurrent-topic", "key", []byte("msg"))
 				}
 			}(i)
 		} else {
 			go func(id int) {
 				defer wg.Done()
 				for j := 0; j < 10; j++ {
-					_, _ = broker.Subscribe("concurrent-topic")
+					_, _ = broker.Subscribe(ctx, "concurrent-topic", "group")
 				}
 			}(i)
 		}
@@ -122,12 +128,14 @@ func TestConcurrentPublishSubscribe(t *testing.T) {
 func TestCloseGracefulShutdown(t *testing.T) {
 	broker := NewInMemoryBroker()
 
+	ctx := context.Background()
+
 	// Subscribe to two different topics
-	ch1, err := broker.Subscribe("topic-1")
+	ch1, err := broker.Subscribe(ctx, "topic-1", "group-1")
 	if err != nil {
 		t.Fatalf("Subscribe to topic-1 failed: %v", err)
 	}
-	ch2, err := broker.Subscribe("topic-2")
+	ch2, err := broker.Subscribe(ctx, "topic-2", "group-2")
 	if err != nil {
 		t.Fatalf("Subscribe to topic-2 failed: %v", err)
 	}
@@ -174,7 +182,8 @@ func TestPublishAfterClose(t *testing.T) {
 	broker := NewInMemoryBroker()
 	broker.Close()
 
-	err := broker.Publish("topic", []byte("msg"))
+	ctx := context.Background()
+	err := broker.Publish(ctx, "topic", "key", []byte("msg"))
 	if err == nil {
 		t.Error("Expected error when publishing to closed broker")
 	}
@@ -185,7 +194,8 @@ func TestSubscribeAfterClose(t *testing.T) {
 	broker := NewInMemoryBroker()
 	broker.Close()
 
-	_, err := broker.Subscribe("topic")
+	ctx := context.Background()
+	_, err := broker.Subscribe(ctx, "topic", "group")
 	if err == nil {
 		t.Error("Expected error when subscribing to closed broker")
 	}
@@ -196,21 +206,23 @@ func TestMultipleSubscribersSameTopic(t *testing.T) {
 	broker := NewInMemoryBroker()
 	defer broker.Close()
 
+	ctx := context.Background()
+
 	// Create 3 subscribers on same topic
-	ch1, _ := broker.Subscribe("shared-topic")
-	ch2, _ := broker.Subscribe("shared-topic")
-	ch3, _ := broker.Subscribe("shared-topic")
+	ch1, _ := broker.Subscribe(ctx, "shared-topic", "group1")
+	ch2, _ := broker.Subscribe(ctx, "shared-topic", "group2")
+	ch3, _ := broker.Subscribe(ctx, "shared-topic", "group3")
 
 	// Publish message
 	testMsg := []byte("broadcast message")
-	broker.Publish("shared-topic", testMsg)
+	broker.Publish(ctx, "shared-topic", "key", testMsg)
 
 	// All subscribers should receive the message
-	for i, ch := range []<-chan []byte{ch1, ch2, ch3} {
+	for i, ch := range []<-chan Message{ch1, ch2, ch3} {
 		select {
-		case received := <-ch:
-			if string(received) != string(testMsg) {
-				t.Errorf("Subscriber %d: expected %q, got %q", i, testMsg, received)
+		case msg := <-ch:
+			if string(msg.Value) != string(testMsg) {
+				t.Errorf("Subscriber %d: expected %q, got %q", i, testMsg, msg.Value)
 			}
 		case <-time.After(1 * time.Second):
 			t.Errorf("Subscriber %d: timeout waiting for message", i)

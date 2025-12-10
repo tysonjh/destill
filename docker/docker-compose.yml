@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.1
+    container_name: destill-redpanda
+    command:
+      - redpanda
+      - start
+      - --smp 1
+      - --memory 1G
+      - --overprovisioned
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+    ports:
+      - "18081:18081"  # Schema Registry
+      - "18082:18082"  # HTTP Proxy
+      - "19092:19092"  # Kafka API
+      - "19644:9644"   # Admin API
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: destill-postgres
+    environment:
+      POSTGRES_USER: destill
+      POSTGRES_PASSWORD: destill
+      POSTGRES_DB: destill
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U destill"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redpanda-connect:
+    image: docker.redpanda.com/redpandadata/connect:4
+    container_name: destill-connect
+    ports:
+      - "4195:4195"  # HTTP API for monitoring
+    volumes:
+      - ./connect.yaml:/connect.yaml
+    command: ["-c", "/connect.yaml"]
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      REDPANDA_BROKERS: redpanda:9092
+      POSTGRES_DSN: postgres://destill:destill@postgres:5432/destill?sslmode=disable
+
+  redpanda-console:
+    image: docker.redpanda.com/redpandadata/console:v2.4.5
+    container_name: destill-console
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_SCHEMAREGISTRY_ENABLED: "true"
+      KAFKA_SCHEMAREGISTRY_URLS: http://redpanda:8081
+      # Note: Console's "Connect" feature is for Kafka Connect only
+      # Redpanda Connect (Benthos) uses a different API - monitor via HTTP endpoints
+    depends_on:
+      - redpanda
+
+volumes:
+  redpanda-data:
+  postgres-data:
+
