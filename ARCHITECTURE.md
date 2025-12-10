@@ -1,105 +1,306 @@
-# 🏛️ DESTILL Architecture Overview
+# Destill Architecture - Agentic Data Plane
 
-Destill is a distributed intelligence system designed to minimize Mean Time To Resolution (MTTR) for CI/CD failures by identifying recurring error patterns. The architecture follows a simple, three-phase stream processing pipeline, with each phase communicating via a central Message Broker (NATS).
+Destill is a distributed log triage system for CI/CD pipelines using an agentic architecture with Redpanda (Kafka) and Postgres.
 
----
-
-## 1. Core Data Flow 
-
-All data within Destill flows through three main subjects (queues) managed by the Message Broker:
-
-* **`ci_requests_raw` (Producer: CLI/User):** Receives requests (e.g., a Buildkite URL) for a build to analyze.
-* **`ci_logs_raw` (Producer: Ingestion Agent):** Receives raw log chunks and build metadata ready for analysis.
-* **`ci_failures_ranked` (Producer: Analysis Agent):** Receives the final, intelligent `TriageCard` objects, sorted and hash-tagged for recurrence.
-
----
-
-## 2. Phase 1: Ingestion Agent (The Producer) 🎣
-
-The Ingestion Agent is the system's entry point, responsible for fetching raw data from external services (like Buildkite) and translating it into a stream format.
-
-* **Input Subject:** `ci_requests_raw`
-* **Core Responsibilities:**
-    * **External Integration:** Uses the Buildkite API Client to fetch build and job metadata.
-    * **Data Serialization:** Takes raw log output (large text files) and breaks it down into small, digestible **`LogChunk`** messages.
-    * **Stream Publishing:** Publishes raw log data to the `ci_logs_raw` subject for processing by Phase 2.
-* **Goal:** Ensure **high throughput** and reliable delivery of all raw, necessary data.
-
----
-
-## 3. Phase 2: Analysis Agent (The Intelligence) 🧠
-
-The Analysis Agent is the intelligence core of Destill, responsible for transforming raw, noisy log data into actionable, high-signal failure patterns.
-
-* **Input Subject:** `ci_logs_raw`
-* **Core Responsibilities:**
-    * **Log Normalization (Recurrence):** Performs a 10-step cleaning process to strip non-deterministic noise (timestamps, UUIDs, PIDs). This is crucial for recurrence tracking.
-    * **Hashing:** Calculates the **`MessageHash` (SHA256)** on the normalized content. This hash is the immutable ID for recognizing recurring failures across different builds.
-    * **Severity Detection (Permissive):** Tags the log line with a severity (e.g., `ERROR`) using simple, permissive keyword matching (high recall).
-    * **Confidence Scoring (High Precision):** Calculates the **`ConfidenceScore`** based on structural quality (e.g., stack trace presence, line-start anchors) and applies **aggressive penalties** for known Type A/noise patterns (e.g., connection retries, deprecation warnings).
-* **Output Subject:** `ci_failures_ranked` (Publishes the final `TriageCard` objects).
-
----
-
-## 4. Phase 3: CLI Orchestrator and TUI Display (The Consumer) 🖥️
-
-This phase provides the direct user interface for the engineer to triage failures and find the root cause quickly.
-
-* **Input Subject:** `ci_failures_ranked`
-* **Core Responsibilities:**
-    * **Data Consumption:** Subscribes to the ranked failure stream.
-    * **Triage Prioritization:** Presents the list of failures in the TUI, **defaulting to sort by `ConfidenceScore` (descending)**. This ensures Type B (high-leverage) failures are always viewed first.
-    * **Recurrence Grouping:** Aggregates and displays failures based on the **`MessageHash`** and **Recurrence Count**, enabling the engineer to fix the pattern, not the instance.
-* **Goal:** Provide a clean, prioritized UX to minimize the engineer's time spent browsing logs.
-
----
-
-## 5. Key Design Decisions
-
-### 5.1 Permissive Detection + Confident Scoring
-
-The system uses a two-layer approach:
-- **Severity Detection (High Recall):** Casts a wide net to catch all potential errors
-- **Confidence Scoring (High Precision):** Applies bonuses and penalties to surface actionable failures
-
-### 5.2 Message Hashing for Recurrence
-
-By normalizing logs (stripping timestamps, UUIDs, IPs, etc.) and hashing the result, the system can identify when the "same" error occurs across different builds, enabling:
-- Deduplication
-- Pattern recognition
-- Trend analysis
-- Alert fatigue reduction
-
-### 5.3 Penalty Patterns
-
-High-confidence penalty patterns reduce false positives:
-- **Transient failures** (connection reset + retry): -0.30
-- **Address already in use**: -0.25
-- **Tests passed summaries**: -0.35
-- **Deprecation warnings**: -0.20
-
----
-
-## 6. Package Structure
+## Architecture Overview
 
 ```
-src/
-├── broker/          # Message broker implementations
-├── buildkite/       # Buildkite API client
-├── cmd/
-│   ├── analysis/    # Analysis Agent
-│   ├── cli/         # CLI orchestrator
-│   └── ingestion/   # Ingestion Agent
-├── config/          # Configuration management
-├── contracts/       # Shared interfaces and data structures
-└── pipeline/        # Integration tests
+┌─────────────────────────────────────────────────────────────────┐
+│                    Agentic Data Plane                           │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  CLI: destill run <build-url>                                   │
+│       │                                                         │
+│       ▼                                                         │
+│  ┌──────────────┐      ┌─────────────────┐                     │
+│  │   Redpanda   │      │  Ingest Agent   │                     │
+│  │  .requests   │─────▶│   (stateless)   │                     │
+│  └──────────────┘      └─────────┬───────┘                     │
+│                                  │                             │
+│                        Buildkite API                           │
+│                                  │                             │
+│                                  ▼                             │
+│                        ┌─────────────────┐                     │
+│                        │   Redpanda      │                     │
+│                        │  .logs.raw      │                     │
+│                        │  (~500KB chunks)│                     │
+│                        └────────┬────────┘                     │
+│                                 │                              │
+│                                 ▼                              │
+│                        ┌──────────────────┐                    │
+│                        │ Analyze Agent    │                    │
+│                        │  (stateless)     │                    │
+│                        └────────┬─────────┘                    │
+│                                 │                              │
+│                                 ▼                              │
+│                        ┌─────────────────┐                     │
+│                        │   Redpanda      │                     │
+│                        │  .findings      │                     │
+│                        └────────┬────────┘                     │
+│                                 │                              │
+│                    Redpanda Connect                            │
+│                        (Benthos)                               │
+│                                 │                              │
+│                                 ▼                              │
+│                        ┌─────────────────┐                     │
+│                        │   Postgres      │                     │
+│                        │   findings      │                     │
+│                        └────────┬────────┘                     │
+│                                 │                              │
+│                                 ▼                              │
+│                      CLI: destill view <req-id>                │
+│                           (TUI Display)                        │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
----
+## Core Components
 
-## 7. Future Roadmap
+### 1. Ingest Agent (`destill-ingest`)
 
-- **Phase 3**: TUI interface with Bubble Tea
-- **Phase 4**: Persistence layer and historical analysis
-- **Phase 5**: Multi-platform support (GitHub Actions, GitLab CI)
-- **Phase 6**: ML-based pattern learning and classification
+**Purpose**: Fetch build logs from CI systems and publish to Redpanda
+
+**Operation**:
+- Consumes: `destill.requests` topic
+- Fetches: Build metadata and job logs from Buildkite API
+- Chunks: Logs into ~500KB chunks with 50-line overlap
+- Publishes: `LogChunkV2` to `destill.logs.raw` topic
+- Keying: Uses `buildID` as message key for ordering
+
+**Stateless**: No cross-request state. Can scale horizontally.
+
+### 2. Analyze Agent (`destill-analyze`)
+
+**Purpose**: Analyze log chunks and extract error findings
+
+**Operation**:
+- Consumes: `destill.logs.raw` topic
+- Analyzes: Each chunk independently (stateless)
+- Detects: ERROR and FATAL severity lines
+- Scores: Confidence based on patterns and context
+- Extracts: 15 lines pre-context, 30 lines post-context (within chunk)
+- Normalizes: Messages for deduplication (removes timestamps, UUIDs, etc.)
+- Hashes: Normalized messages with SHA256
+- Publishes: `TriageCardV2` to `destill.analysis.findings` topic
+- Keying: Uses `requestID` as message key for grouping
+
+**Stateless**: Processes each chunk in isolation. Accepts boundary limitations. Can scale horizontally.
+
+### 3. Redpanda Connect (Benthos)
+
+**Purpose**: Stream processor for Kafka → Postgres sink
+
+**Operation**:
+- Consumes: `destill.analysis.findings` topic
+- Transforms: JSONB fields (arrays to JSON)
+- Batches: 100 messages or 1 second
+- Writes: To Postgres `findings` table
+- Consumer Group: `destill-postgres-sink`
+
+**Configuration**: See `docker/connect.yaml`
+
+### 4. Postgres Storage
+
+**Purpose**: Persistent storage for analysis findings
+
+**Schema**:
+- `findings`: Analysis results with JSONB context
+- `requests`: Request tracking and status
+- `findings_summary`: Aggregated view for recurrence
+
+**Indexes**: request_id, message_hash, confidence_score, created_at
+
+### 5. CLI (`destill`)
+
+**Purpose**: User interface with automatic mode detection
+
+**Commands**:
+- `destill run <url>`: Submit build for analysis
+- `destill view <req-id>`: View findings in TUI
+- `destill status <req-id>`: Check request progress
+
+**Mode Detection**:
+- **Legacy**: No `REDPANDA_BROKERS` → in-memory broker
+- **Agentic**: `REDPANDA_BROKERS` set → distributed mode
+
+## Key Design Decisions
+
+### Stateless Processing
+
+Both agents are **completely stateless**:
+- No shared memory between requests
+- No cross-chunk state in analyzer
+- Each message processed independently
+- Enables horizontal scaling
+
+**Trade-off**: Context extraction limited to chunk boundaries. Acceptable for PoC - provides "best effort" context.
+
+### 500KB Chunking with Overlap
+
+**Why**:
+- Redpanda best practices (avoid huge messages)
+- Parallel processing by multiple analyze agents
+- Memory-efficient
+
+**How**:
+- Target: ~500KB per chunk
+- Overlap: 50 lines between chunks
+- Line tracking: Each chunk knows its line range
+
+### Message Keying Strategy
+
+**Logs Topic** (`destill.logs.raw`):
+- Key: `buildID`
+- Ensures chunks from same build stay ordered
+- Enables sequential processing if needed
+
+**Findings Topic** (`destill.analysis.findings`):
+- Key: `requestID`
+- Groups findings by analysis request
+- Simplifies per-request queries
+
+### Consumer Groups
+
+- `destill-ingest`: Ingest agents (parallel processing)
+- `destill-analyze`: Analyze agents (parallel processing)
+- `destill-postgres-sink`: Connect sink (parallel writes)
+
+Multiple instances in same group = automatic load balancing
+
+## Data Flow
+
+### Submit Request
+```
+User → destill run <url>
+     → AnalysisRequest → destill.requests
+     → Postgres requests table
+     ← Request ID returned
+```
+
+### Ingest
+```
+Ingest Agent → Subscribe: destill.requests
+             → Buildkite API (fetch logs)
+             → Chunk (500KB)
+             → Publish: destill.logs.raw
+```
+
+### Analyze
+```
+Analyze Agent → Subscribe: destill.logs.raw
+              → Detect errors (stateless)
+              → Extract context (chunk-only)
+              → Normalize + hash
+              → Publish: destill.analysis.findings
+```
+
+### Persist
+```
+Redpanda Connect → Subscribe: destill.analysis.findings
+                 → Transform (JSONB)
+                 → Batch (100 or 1s)
+                 → Insert: Postgres findings
+```
+
+### View
+```
+User → destill view <req-id>
+     → Query: Postgres (request_id = ?)
+     → Sort: confidence_score DESC
+     → Display: TUI with findings
+```
+
+## Scalability
+
+### Horizontal Scaling
+
+**Ingest Agents**: Add more instances
+- Each processes different builds
+- Share work via consumer group
+
+**Analyze Agents**: Add more instances
+- Each processes different chunks
+- Share work via consumer group
+- Completely independent
+
+### Vertical Limits
+
+- **Redpanda**: Single-broker for dev (multi-broker for prod)
+- **Postgres**: Connection pooling recommended
+- **Message Size**: 500KB chunks (well within Kafka limits)
+
+## Monitoring
+
+### Redpanda Console
+- Topics: Message flow visualization
+- Consumer Groups: Lag monitoring
+- URL: http://localhost:8080
+
+### Redpanda Connect
+- HTTP API: http://localhost:4195/stats
+- Metrics: Prometheus format
+- Health: `/ready` endpoint
+- See: `docker/MONITORING_CONNECT.md`
+
+### Postgres
+- Query: `SELECT COUNT(*) FROM findings WHERE request_id = ?`
+- Status: `SELECT * FROM requests WHERE request_id = ?`
+- Summary: `SELECT * FROM findings_summary`
+
+## Development
+
+### Build
+```bash
+make build-agentic
+```
+
+Produces:
+- `bin/destill` - Main CLI
+- `bin/destill-ingest` - Ingest agent
+- `bin/destill-analyze` - Analyze agent
+
+### Test
+```bash
+make test
+```
+
+Runs all unit tests (43 tests across packages).
+
+### Infrastructure
+```bash
+cd docker && docker-compose up -d
+```
+
+Services: Redpanda, Postgres, Connect, Console
+
+## Production Considerations
+
+### Topics
+- Retention: 1h for logs (ephemeral), 7d for findings
+- Partitions: 3 for parallelism
+- Replication: 3 for durability (multi-broker)
+
+### Agents
+- Deployment: Kubernetes/Docker
+- Replicas: 2-5 per agent type
+- Resources: Minimal (stateless, efficient)
+- Health checks: `/ready` endpoints
+
+### Storage
+- Postgres: Regular backups
+- Indexes: Monitor query performance
+- Cleanup: TTL on old findings (optional)
+
+### Monitoring
+- Metrics: Prometheus + Grafana
+- Alerts: Consumer lag, error rates
+- Logs: Centralized logging (ELK, etc.)
+
+## References
+
+- **Quick Start**: `QUICK_START_AGENTIC.md`
+- **Testing Guide**: `TESTING_AGENTIC_MODE.md`
+- **Connect Monitoring**: `docker/MONITORING_CONNECT.md`
+- **Infrastructure**: `docker/README.md`
+- **Refactor Plan**: `project_notes/2025-12-09-agentic-refactor-plan.md`
+
