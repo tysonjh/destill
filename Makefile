@@ -1,20 +1,15 @@
-.PHONY: all build build-legacy build-agentic clean test help
+.PHONY: all build build-agents clean test help
 
 # Default target
 all: build
 
 # Build all binaries
-build: build-legacy build-agentic
+build: build-agents
 
-# Build legacy CLI (existing)
-build-legacy:
-	@echo "Building legacy destill CLI..."
-	@go build -o bin/destill-legacy ./src/cmd/cli
-
-# Build agentic mode binaries
-build-agentic:
-	@echo "Building agentic mode binaries..."
-	@go build -o bin/destill ./src/cmd/destill-cli
+# Build all binaries (CLI and agents)
+build-agents:
+	@echo "Building destill binaries..."
+	@go build -o bin/destill ./src/cmd/cli
 	@go build -o bin/destill-ingest ./src/cmd/ingest-agent
 	@go build -o bin/destill-analyze ./src/cmd/analyze-agent
 
@@ -22,7 +17,7 @@ build-agentic:
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf bin/
-	@rm -f destill destill-ingest destill-analyze destill-legacy
+	@rm -f destill destill-ingest destill-analyze
 	@echo "Clean complete"
 
 # Run tests
@@ -38,7 +33,7 @@ test-coverage:
 	@echo "Coverage report generated: coverage.html"
 
 # Build and install to system
-install: build-agentic
+install: build
 	@echo "Installing binaries to /usr/local/bin..."
 	@sudo cp bin/destill /usr/local/bin/
 	@sudo cp bin/destill-ingest /usr/local/bin/
@@ -52,16 +47,15 @@ help:
 	@echo "Available targets:"
 	@echo "  all             - Build all binaries (default)"
 	@echo "  build           - Build all binaries"
-	@echo "  build-legacy    - Build legacy CLI only"
-	@echo "  build-agentic   - Build agentic mode binaries"
+	@echo "  build-agents    - Build all binaries"
 	@echo "  clean           - Remove build artifacts"
 	@echo "  test            - Run all tests"
 	@echo "  test-coverage   - Run tests with coverage report"
 	@echo "  install         - Install binaries to system (requires sudo)"
 	@echo "  help            - Show this help message"
 	@echo ""
-	@echo "Agentic mode binaries:"
-	@echo "  bin/destill         - Main CLI with mode detection"
+	@echo "Binaries:"
+	@echo "  bin/destill         - Main CLI (local mode with broker)"
 	@echo "  bin/destill-ingest  - Standalone ingest agent"
 	@echo "  bin/destill-analyze - Standalone analyze agent"
 
