@@ -4,11 +4,13 @@ package ingestion
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
+	"destill-agent/src/broker"
 	"destill-agent/src/buildkite"
 	"destill-agent/src/contracts"
 	"destill-agent/src/logger"
@@ -23,13 +25,13 @@ const (
 
 // Agent consumes requests and publishes raw log data via a MessageBroker.
 type Agent struct {
-	msgBroker       contracts.MessageBroker
+	msgBroker       broker.Broker
 	buildkiteClient *buildkite.Client
 	logger          logger.Logger
 }
 
 // NewAgent creates a new IngestionAgent with the given broker, Buildkite API token, and logger.
-func NewAgent(msgBroker contracts.MessageBroker, buildkiteAPIToken string, log logger.Logger) *Agent {
+func NewAgent(msgBroker broker.Broker, buildkiteAPIToken string, log logger.Logger) *Agent {
 	return &Agent{
 		msgBroker:       msgBroker,
 		buildkiteClient: buildkite.NewClient(buildkiteAPIToken),
@@ -39,25 +41,33 @@ func NewAgent(msgBroker contracts.MessageBroker, buildkiteAPIToken string, log l
 
 // Run starts the ingestion agent's main loop.
 // It subscribes to the destill_requests topic and processes incoming requests.
-func (a *Agent) Run() error {
-	requestChannel, err := a.msgBroker.Subscribe("destill_requests")
+func (a *Agent) Run(ctx context.Context) error {
+	requestChannel, err := a.msgBroker.Subscribe(ctx, "destill_requests", "ingestion-agent")
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to destill_requests: %w", err)
 	}
 
 	a.logger.Info("[IngestionAgent] Listening for requests on 'destill_requests' topic...")
 
-	for message := range requestChannel {
-		if err := a.processRequest(message); err != nil {
-			a.logger.Error("[IngestionAgent] Error processing request: %v", err)
+	for {
+		select {
+		case message, ok := <-requestChannel:
+			if !ok {
+				a.logger.Info("[IngestionAgent] Request channel closed, shutting down")
+				return nil
+			}
+			if err := a.processRequest(ctx, message.Value); err != nil {
+				a.logger.Error("[IngestionAgent] Error processing request: %v", err)
+			}
+		case <-ctx.Done():
+			a.logger.Info("[IngestionAgent] Context cancelled, shutting down")
+			return ctx.Err()
 		}
 	}
-
-	return nil
 }
 
 // processRequest handles an incoming request message.
-func (a *Agent) processRequest(message []byte) error {
+func (a *Agent) processRequest(ctx context.Context, message []byte) error {
 	// Parse the incoming request
 	var request struct {
 		RequestID string `json:"request_id"`
@@ -142,7 +152,7 @@ func (a *Agent) processRequest(message []byte) error {
 				continue
 			}
 
-			if err := a.msgBroker.Publish("ci_logs_raw", data); err != nil {
+			if err := a.msgBroker.Publish(ctx, "ci_logs_raw", logChunk.ID, data); err != nil {
 				a.logger.Error("[IngestionAgent] Error publishing log chunk %d for job %s: %v", chunkIdx, job.Name, err)
 				continue
 			}

@@ -3,6 +3,7 @@
 package analysis
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 	"destill-agent/src/logger"
 )
@@ -73,12 +75,12 @@ var (
 
 // Agent subscribes to raw logs and performs analysis.
 type Agent struct {
-	msgBroker contracts.MessageBroker
+	msgBroker broker.Broker
 	logger    logger.Logger
 }
 
 // NewAgent creates a new AnalysisAgent with the given broker and logger.
-func NewAgent(msgBroker contracts.MessageBroker, log logger.Logger) *Agent {
+func NewAgent(msgBroker broker.Broker, log logger.Logger) *Agent {
 	return &Agent{
 		msgBroker: msgBroker,
 		logger:    log,
@@ -87,26 +89,34 @@ func NewAgent(msgBroker contracts.MessageBroker, log logger.Logger) *Agent {
 
 // Run starts the analysis agent's main loop.
 // It subscribes to the ci_logs_raw topic and processes incoming log chunks.
-func (a *Agent) Run() error {
-	logChannel, err := a.msgBroker.Subscribe("ci_logs_raw")
+func (a *Agent) Run(ctx context.Context) error {
+	logChannel, err := a.msgBroker.Subscribe(ctx, "ci_logs_raw", "analysis-agent")
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to ci_logs_raw: %w", err)
 	}
 
 	a.logger.Info("[AnalysisAgent] Listening for logs on 'ci_logs_raw' topic...")
 
-	for message := range logChannel {
-		// Launch processing in a Go routine for concurrency
-		go a.processLogChunk(message)
+	for {
+		select {
+		case message, ok := <-logChannel:
+			if !ok {
+				a.logger.Info("[AnalysisAgent] Log channel closed, shutting down")
+				return nil
+			}
+			// Launch processing in a Go routine for concurrency
+			go a.processLogChunk(ctx, message.Value)
+		case <-ctx.Done():
+			a.logger.Info("[AnalysisAgent] Context cancelled, shutting down")
+			return ctx.Err()
+		}
 	}
-
-	return nil
 }
 
 // processLogChunk handles an incoming raw log chunk.
 // Each LogChunk contains the full log output from one CI job.
 // We split it into individual lines and analyze each line for failures.
-func (a *Agent) processLogChunk(message []byte) {
+func (a *Agent) processLogChunk(ctx context.Context, message []byte) {
 	// Deserialize the raw message into a LogChunk
 	var logChunk contracts.LogChunk
 	if err := json.Unmarshal(message, &logChunk); err != nil {
@@ -203,7 +213,7 @@ func (a *Agent) processLogChunk(message []byte) {
 			continue
 		}
 
-		if err := a.msgBroker.Publish("ci_failures_ranked", data); err != nil {
+		if err := a.msgBroker.Publish(ctx, "ci_failures_ranked", triageCard.ID, data); err != nil {
 			a.logger.Error("[AnalysisAgent] Error publishing triage card: %v", err)
 			continue
 		}

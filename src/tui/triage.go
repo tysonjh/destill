@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 )
 
@@ -51,14 +53,16 @@ type MainModel struct {
 	ready          bool
 
 	// Streaming support
-	broker         contracts.MessageBroker
-	cardChan       <-chan []byte    // Channel receiving cards from broker
-	pendingCards   []Item           // Cards waiting to be merged
-	hashMap        map[string]*Item // For grouping by hash
-	status         LoadStatus       // Current loading status
-	cardCount      int              // Total cards received (above threshold)
-	droppedCount   int              // Cards dropped due to low confidence
-	jobsDiscovered map[string]bool  // Jobs we've seen so far
+	broker         broker.Broker          // Message broker
+	cardChan       <-chan broker.Message  // Channel receiving cards from broker
+	pendingCards   []Item                 // Cards waiting to be merged
+	hashMap        map[string]*Item       // For grouping by hash
+	status         LoadStatus             // Current loading status
+	cardCount      int                    // Total cards received (above threshold)
+	droppedCount   int                    // Cards dropped due to low confidence
+	jobsDiscovered map[string]bool        // Jobs we've seen so far
+	ctx            context.Context        // Context for broker operations
+	cancel         context.CancelFunc     // Cancel function
 }
 
 // Start initializes and runs the TUI with the provided triage cards (legacy mode).
@@ -69,7 +73,7 @@ func Start(cards []contracts.TriageCard) error {
 // StartWithBroker initializes the TUI in streaming mode with a message broker.
 // If broker is nil, uses the provided initial cards only (legacy mode).
 // If broker is provided, subscribes to ci_failures_ranked for live updates.
-func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.TriageCard) error {
+func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) error {
 	// Initialize styles
 	styles := DefaultStyles()
 
@@ -98,7 +102,7 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 
 	// Determine initial status
 	status := StatusComplete
-	if broker != nil {
+	if brk != nil {
 		status = StatusLoading
 	}
 
@@ -111,11 +115,17 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 	listView.SetItems(items)
 
 	// Subscribe to broker if provided
-	var cardChan <-chan []byte
-	if broker != nil {
+	var cardChan <-chan broker.Message
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if brk != nil {
+		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cardChan, err = broker.Subscribe("ci_failures_ranked")
+		cardChan, err = brk.Subscribe(ctx, "ci_failures_ranked", "tui-consumer")
 		if err != nil {
+			if cancel != nil {
+				cancel()
+			}
 			return err
 		}
 	}
@@ -127,7 +137,7 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 		styles:         styles,
 		detailViewport: viewport.New(0, 0),
 		ready:          false,
-		broker:         broker,
+		broker:         brk,
 		cardChan:       cardChan,
 		pendingCards:   nil,
 		hashMap:        hashMap,
@@ -135,10 +145,15 @@ func StartWithBroker(broker contracts.MessageBroker, initialCards []contracts.Tr
 		cardCount:      len(initialCards),
 		droppedCount:   0,
 		jobsDiscovered: jobsDiscovered,
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
+	if cancel != nil {
+		cancel()
+	}
 	return err
 }
 
@@ -175,16 +190,16 @@ func (m MainModel) Init() tea.Cmd {
 }
 
 // listenForCards returns a command that waits for the next card from the broker
-func listenForCards(cardChan <-chan []byte) tea.Cmd {
+func listenForCards(cardChan <-chan broker.Message) tea.Cmd {
 	return func() tea.Msg {
-		data, ok := <-cardChan
+		msg, ok := <-cardChan
 		if !ok {
 			// Channel closed, pipeline complete
 			return pipelineCompleteMsg{}
 		}
 
 		var card contracts.TriageCard
-		if err := json.Unmarshal(data, &card); err != nil {
+		if err := json.Unmarshal(msg.Value, &card); err != nil {
 			return pipelineErrorMsg{err: err}
 		}
 		return cardReceivedMsg{card: card}

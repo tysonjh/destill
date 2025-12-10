@@ -2,6 +2,7 @@
 package ingestion
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -12,13 +13,14 @@ import (
 
 // TestIngestionAgentHandlesInvalidRequest verifies agent handles malformed requests gracefully.
 func TestIngestionAgentHandlesInvalidRequest(t *testing.T) {
-	msgBroker := broker.NewInMemoryBroker()
-	defer msgBroker.Close()
+	ctx := context.Background()
+	inmemBroker := broker.NewInMemoryBroker()
+	defer inmemBroker.Close()
 
-	agent := NewAgent(msgBroker, "test-token-placeholder", logger.NewSilentLogger())
+	agent := NewAgent(inmemBroker, "test-token-placeholder", logger.NewSilentLogger())
 
 	// Process invalid JSON - should not panic
-	err := agent.processRequest([]byte("invalid json"))
+	err := agent.processRequest(ctx, []byte("invalid json"))
 	if err == nil {
 		t.Error("Expected error for invalid JSON")
 	}

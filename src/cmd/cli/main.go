@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,11 +23,14 @@ import (
 
 var (
 	// Shared message broker for all agents
-	msgBroker contracts.MessageBroker
+	msgBroker broker.Broker
 	// Application configuration
 	appConfig *config.Config
 	// Flag to track if we're in --detach mode (non-interactive, no TUI)
 	isDetachMode bool
+	// Context for agent lifecycle
+	agentCtx    context.Context
+	agentCancel context.CancelFunc
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -54,20 +58,23 @@ It uses a stream processing architecture with:
 		isDetachMode = detachFlag != nil && detachFlag.Value.String() == "true"
 
 		// Initialize the broker before any command runs
-		inMemoryBroker := broker.NewInMemoryBroker()
+		msgBroker = broker.NewInMemoryBroker()
 
 		// Only enable verbose broker logging in detach mode
 		// (TUI mode needs quiet broker to prevent log interference)
 		if isDetachMode {
-			inMemoryBroker.SetVerbose(true)
+			msgBroker.(*broker.InMemoryBroker).SetVerbose(true)
 		}
 
-		// Use adapter to bridge new broker interface with legacy code
-		msgBroker = broker.NewLegacyAdapter(inMemoryBroker)
+		// Create context for agent lifecycle
+		agentCtx, agentCancel = context.WithCancel(context.Background())
 		startStreamPipeline()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// Clean up broker when done
+		// Cancel agent context and clean up broker when done
+		if agentCancel != nil {
+			agentCancel()
+		}
 		if msgBroker != nil {
 			msgBroker.Close()
 		}
@@ -132,33 +139,34 @@ Example:
 func collectTriageCards(duration time.Duration) []contracts.TriageCard {
 	var cards []contracts.TriageCard
 
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	defer cancel()
+
 	// Subscribe to the ranked failures topic
-	rankChan, err := msgBroker.Subscribe("ci_failures_ranked")
+	rankChan, err := msgBroker.Subscribe(ctx, "ci_failures_ranked", "cli-collector")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error subscribing to ci_failures_ranked: %v\n", err)
 		return cards
 	}
 
 	// Collect cards for the specified duration
-	timeout := time.After(duration)
-
-collectLoop:
 	for {
 		select {
-		case msg := <-rankChan:
+		case msg, ok := <-rankChan:
+			if !ok {
+				return cards
+			}
 			var card contracts.TriageCard
-			if err := json.Unmarshal(msg, &card); err != nil {
+			if err := json.Unmarshal(msg.Value, &card); err != nil {
 				fmt.Fprintf(os.Stderr, "Error unmarshaling triage card: %v\n", err)
 				continue
 			}
 			cards = append(cards, card)
 
-		case <-timeout:
-			break collectLoop
+		case <-ctx.Done():
+			return cards
 		}
 	}
-
-	return cards
 }
 
 // getRecurrenceCount extracts the recurrence count from metadata
@@ -250,7 +258,8 @@ Example:
 		}
 
 		// Publish to destill_requests topic
-		if err := msgBroker.Publish("destill_requests", data); err != nil {
+		ctx := context.Background()
+		if err := msgBroker.Publish(ctx, "destill_requests", request.RequestID, data); err != nil {
 			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
 			os.Exit(1)
 		}
@@ -295,10 +304,8 @@ Example:
 		// Launch the streaming TUI
 		// - If cache provided: starts with cached cards, no streaming
 		// - Otherwise: starts empty and streams cards as they arrive
-		var brokerForTUI contracts.MessageBroker
 		if len(initialCards) == 0 {
 			// Streaming mode: pass broker to TUI for live updates
-			brokerForTUI = msgBroker
 			fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
 		} else {
 			// Cache mode: no streaming, use pre-loaded cards
@@ -307,6 +314,12 @@ Example:
 
 		// Brief pause to ensure any remaining log output completes before TUI starts
 		time.Sleep(100 * time.Millisecond)
+
+		// Use broker for streaming if no cache, otherwise nil
+		var brokerForTUI broker.Broker
+		if len(initialCards) == 0 {
+			brokerForTUI = msgBroker
+		}
 
 		if err := tui.StartWithBroker(brokerForTUI, initialCards); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
@@ -336,7 +349,7 @@ func startStreamPipeline() {
 	// Start Ingestion Agent as a persistent goroutine
 	ingestionAgent := ingestion.NewAgent(msgBroker, appConfig.BuildkiteAPIToken, log)
 	go func() {
-		if err := ingestionAgent.Run(); err != nil {
+		if err := ingestionAgent.Run(agentCtx); err != nil && err != context.Canceled {
 			// Error logging always goes to stderr even in silent mode
 			fmt.Fprintf(os.Stderr, "[Pipeline] Ingestion agent error: %v\n", err)
 		}
@@ -345,7 +358,7 @@ func startStreamPipeline() {
 	// Start Analysis Agent as a persistent goroutine
 	analysisAgent := analysis.NewAgent(msgBroker, log)
 	go func() {
-		if err := analysisAgent.Run(); err != nil {
+		if err := analysisAgent.Run(agentCtx); err != nil && err != context.Canceled {
 			// Error logging always goes to stderr even in silent mode
 			fmt.Fprintf(os.Stderr, "[Pipeline] Analysis agent error: %v\n", err)
 		}

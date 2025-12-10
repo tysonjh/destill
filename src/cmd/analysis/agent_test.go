@@ -2,6 +2,7 @@
 package analysis
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -14,19 +15,23 @@ import (
 
 // TestAnalysisAgentUnmarshalsLogChunk verifies the agent correctly unmarshals incoming LogChunk.
 func TestAnalysisAgentUnmarshalsLogChunk(t *testing.T) {
-	msgBroker := broker.NewInMemoryBroker()
-	defer msgBroker.Close()
+	ctx := context.Background()
+	inmemBroker := broker.NewInMemoryBroker()
+	defer inmemBroker.Close()
 
 	// Subscribe to output topic
-	outputChan, err := msgBroker.Subscribe("ci_failures_ranked")
+	outputChan, err := inmemBroker.Subscribe(ctx, "ci_failures_ranked", "test-consumer")
 	if err != nil {
 		t.Fatalf("Failed to subscribe to ci_failures_ranked: %v", err)
 	}
 
 	// Create and start agent
-	agent := NewAgent(msgBroker, logger.NewSilentLogger())
+	agentCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	agent := NewAgent(inmemBroker, logger.NewSilentLogger())
 	go func() {
-		_ = agent.Run()
+		_ = agent.Run(agentCtx)
 	}()
 
 	// Give agent time to subscribe
@@ -52,7 +57,7 @@ func TestAnalysisAgentUnmarshalsLogChunk(t *testing.T) {
 		t.Fatalf("Failed to marshal LogChunk: %v", err)
 	}
 
-	if err := msgBroker.Publish("ci_logs_raw", data); err != nil {
+	if err := inmemBroker.Publish(ctx, "ci_logs_raw", logChunk.ID, data); err != nil {
 		t.Fatalf("Failed to publish LogChunk: %v", err)
 	}
 
@@ -61,7 +66,7 @@ func TestAnalysisAgentUnmarshalsLogChunk(t *testing.T) {
 	case output := <-outputChan:
 		// Verify output can be unmarshaled as TriageCard
 		var triageCard contracts.TriageCard
-		if err := json.Unmarshal(output, &triageCard); err != nil {
+		if err := json.Unmarshal(output.Value, &triageCard); err != nil {
 			t.Fatalf("Failed to unmarshal output as TriageCard: %v", err)
 		}
 
