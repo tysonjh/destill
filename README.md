@@ -68,11 +68,15 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 
 ### Binaries
 
+**Agentic Mode** (distributed):
 - **`bin/destill`** - Main CLI (run, view, status commands)
 - **`bin/destill-ingest`** - Standalone ingest agent
 - **`bin/destill-analyze`** - Standalone analyze agent
 
-### Infrastructure
+**Legacy Mode** (all-in-one):
+- **`bin/destill-legacy`** - Single-binary with streaming TUI
+
+### Infrastructure (Agentic Mode Only)
 
 - **Redpanda** - Message broker (Kafka-compatible)
 - **Postgres** - Persistent storage
@@ -104,11 +108,12 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 ### Build
 
 ```bash
-# Build all agentic binaries
-make build-agentic
+# Build all binaries (agentic + legacy)
+make build
 
-# Build legacy CLI (in-memory mode)
-make build-legacy
+# Or individually:
+make build-agentic   # Distributed mode binaries
+make build-legacy    # In-memory mode binary
 
 # Run tests
 make test
@@ -116,6 +121,12 @@ make test
 # Run tests with coverage
 make test-coverage
 ```
+
+**Binaries produced**:
+- `bin/destill` - Agentic CLI (run, view, status)
+- `bin/destill-ingest` - Ingest agent
+- `bin/destill-analyze` - Analyze agent
+- `bin/destill-legacy` - Legacy all-in-one CLI
 
 ### Install
 
@@ -126,36 +137,65 @@ make install
 
 ## 🎯 Usage
 
-### Agentic Mode (Distributed)
+Destill supports two modes with different tradeoffs:
 
-**Requirements**: Redpanda and Postgres running
+### Agentic Mode (Distributed) - Recommended
+
+**Best for**: Production, persistence, scalability
+
+**Requirements**: Redpanda and Postgres running (via Docker)
 
 ```bash
+# Set environment variables
+export BUILDKITE_API_TOKEN="your-token"
+export REDPANDA_BROKERS="localhost:19092"
+export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=disable"
+
+# Start agents (in separate terminals)
+./bin/destill-ingest
+./bin/destill-analyze
+
 # Submit build for analysis
 ./bin/destill run "https://buildkite.com/org/pipeline/builds/123"
 # Returns: Request ID
 
-# View results
+# View results (queries Postgres)
 ./bin/destill view <request-id>
 
 # Check status
 ./bin/destill status <request-id>
 ```
 
-### Legacy Mode (In-Memory)
+**Advantages**:
+- ✅ Persistent storage (findings survive restarts)
+- ✅ Horizontally scalable (add more agents)
+- ✅ View historical analyses
+- ✅ Production-ready
 
-**Requirements**: Just the binary
+### Legacy Mode (In-Memory) - Quick Testing
+
+**Best for**: Quick testing, development, demos
+
+**Requirements**: Just the binary (no Docker)
 
 ```bash
-# Build legacy CLI
-go build -o destill-legacy ./src/cmd/cli
-
-# Run (no infrastructure needed)
+# Set environment (no REDPANDA_BROKERS = legacy mode)
 export BUILDKITE_API_TOKEN="your-token"
-./destill-legacy build "https://buildkite.com/org/pipeline/builds/123"
+
+# Run with streaming TUI (all-in-one)
+./bin/destill-legacy build "https://buildkite.com/org/pipeline/builds/123"
 ```
 
-**Note**: Legacy mode runs everything in-process with streaming TUI. No persistence.
+**Advantages**:
+- ✅ No infrastructure needed
+- ✅ Instant startup
+- ✅ Streaming TUI (real-time)
+- ✅ Simple for demos
+
+**Limitations**:
+- ❌ No persistence (data lost on exit)
+- ❌ Single process (no scaling)
+- ❌ Can't view historical builds
 
 ## 🔍 Monitoring
 

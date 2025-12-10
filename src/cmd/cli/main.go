@@ -62,7 +62,8 @@ It uses a stream processing architecture with:
 			inMemoryBroker.SetVerbose(true)
 		}
 
-		msgBroker = inMemoryBroker
+		// Use adapter to bridge new broker interface with legacy code
+		msgBroker = broker.NewLegacyAdapter(inMemoryBroker)
 		startStreamPipeline()
 	},
 	PersistentPostRun: func(cmd *cobra.Command, args []string) {
