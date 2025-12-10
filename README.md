@@ -4,7 +4,20 @@ A distributed log triage tool for CI/CD pipelines that helps developers quickly 
 
 ## 🚀 Quick Start
 
-See **[QUICK_START_AGENTIC.md](./QUICK_START_AGENTIC.md)** for a 5-minute setup guide.
+The quickest start:
+
+```bash
+# 1. Build binaries
+make build
+
+# 2. Set your Buildkite API token
+export BUILDKITE_API_TOKEN="your-token"
+
+# 3. Analyze a build in local in-memory mode
+./bin/destill build "https://buildkite.com/org/pipeline/builds/123"
+```
+
+For the full distributed system with agents, Redpanda, and Postgres, see **[QUICK_START_AGENTIC.md](./QUICK_START_AGENTIC.md)** for a 5-minute setup guide.
 
 ### TL;DR
 
@@ -29,11 +42,9 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-ingest    # Terminal 1
 ./bin/destill-analyze   # Terminal 2
 
-# 6. Analyze a build
-./bin/destill run "https://buildkite.com/org/pipeline/builds/123"
-
-# 7. View results
-./bin/destill view <request-id>
+# 6. In distributed mode, agents automatically process builds
+# Findings are stored in Postgres
+# Query them directly or check Redpanda Console at http://localhost:8080
 ```
 
 ## 📋 What is Destill?
@@ -68,7 +79,7 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 
 ### Binaries
 
-- **`bin/destill`** - Main CLI with mode detection (local or distributed)
+- **`bin/destill`** - Local mode CLI with `build` command and streaming TUI
 - **`bin/destill-ingest`** - Standalone ingest agent (distributed mode)
 - **`bin/destill-analyze`** - Standalone analyze agent (distributed mode)
 
@@ -146,15 +157,9 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-ingest
 ./bin/destill-analyze
 
-# Submit build for analysis
-./bin/destill run "https://buildkite.com/org/pipeline/builds/123"
-# Returns: Request ID
-
-# View results (queries Postgres)
-./bin/destill view <request-id>
-
-# Check status
-./bin/destill status <request-id>
+# Agents automatically process builds as they come in
+# Findings are stored in Postgres and can be queried
+# For now, use local mode (./bin/destill build) for interactive TUI
 ```
 
 **Advantages**:
