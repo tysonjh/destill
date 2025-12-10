@@ -42,9 +42,11 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-ingest    # Terminal 1
 ./bin/destill-analyze   # Terminal 2
 
-# 6. In distributed mode, agents automatically process builds
-# Findings are stored in Postgres
-# Query them directly or check Redpanda Console at http://localhost:8080
+# 6. Agents automatically process builds and store findings in Postgres
+# Query results:
+docker exec -it destill-postgres psql -U destill -d destill \
+  -c "SELECT severity, LEFT(raw_message, 60) FROM findings ORDER BY confidence_score DESC LIMIT 5;"
+# Or view in Redpanda Console at http://localhost:8080
 ```
 
 ## 📋 What is Destill?
