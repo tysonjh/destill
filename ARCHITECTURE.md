@@ -251,7 +251,7 @@ User → destill view <req-id>
 
 ### Build
 ```bash
-make build-agentic
+make build
 ```
 
 Produces:

@@ -13,7 +13,7 @@ This guide walks through testing the complete agentic architecture end-to-end.
 
 ```bash
 cd /Users/tysonjh/dev/destill-agent
-make build-agentic
+make build
 ```
 
 This creates:

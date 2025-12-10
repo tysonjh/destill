@@ -4,7 +4,7 @@
 
 ### 1. Build Binaries
 ```bash
-make build-agentic
+make build
 ```
 
 ### 2. Start Infrastructure

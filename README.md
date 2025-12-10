@@ -10,7 +10,7 @@ See **[QUICK_START_AGENTIC.md](./QUICK_START_AGENTIC.md)** for a 5-minute setup 
 
 ```bash
 # 1. Build binaries
-make build-agentic
+make build
 
 # 2. Start infrastructure (Docker required)
 cd docker && docker-compose up -d
@@ -68,15 +68,11 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 
 ### Binaries
 
-**Agentic Mode** (distributed):
-- **`bin/destill`** - Main CLI (run, view, status commands)
-- **`bin/destill-ingest`** - Standalone ingest agent
-- **`bin/destill-analyze`** - Standalone analyze agent
+- **`bin/destill`** - Main CLI with mode detection (local or distributed)
+- **`bin/destill-ingest`** - Standalone ingest agent (distributed mode)
+- **`bin/destill-analyze`** - Standalone analyze agent (distributed mode)
 
-**Legacy Mode** (all-in-one):
-- **`bin/destill-legacy`** - Single-binary with streaming TUI
-
-### Infrastructure (Agentic Mode Only)
+### Infrastructure (Distributed Mode Only)
 
 - **Redpanda** - Message broker (Kafka-compatible)
 - **Postgres** - Persistent storage
@@ -108,12 +104,8 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 ### Build
 
 ```bash
-# Build all binaries (agentic + legacy)
+# Build all binaries
 make build
-
-# Or individually:
-make build-agentic   # Distributed mode binaries
-make build-legacy    # In-memory mode binary
 
 # Run tests
 make test
@@ -123,10 +115,9 @@ make test-coverage
 ```
 
 **Binaries produced**:
-- `bin/destill` - Agentic CLI (run, view, status)
+- `bin/destill` - Main CLI (local or distributed mode)
 - `bin/destill-ingest` - Ingest agent
 - `bin/destill-analyze` - Analyze agent
-- `bin/destill-legacy` - Legacy all-in-one CLI
 
 ### Install
 
@@ -137,9 +128,9 @@ make install
 
 ## 🎯 Usage
 
-Destill supports two modes with different tradeoffs:
+Destill supports two modes with automatic detection:
 
-### Agentic Mode (Distributed) - Recommended
+### Distributed Mode (Recommended for Production)
 
 **Best for**: Production, persistence, scalability
 
@@ -172,18 +163,18 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 - ✅ View historical analyses
 - ✅ Production-ready
 
-### Legacy Mode (In-Memory) - Quick Testing
+### Local Mode (Quick Testing)
 
 **Best for**: Quick testing, development, demos
 
 **Requirements**: Just the binary (no Docker)
 
 ```bash
-# Set environment (no REDPANDA_BROKERS = legacy mode)
+# Set environment (no REDPANDA_BROKERS = local mode)
 export BUILDKITE_API_TOKEN="your-token"
 
 # Run with streaming TUI (all-in-one)
-./bin/destill-legacy build "https://buildkite.com/org/pipeline/builds/123"
+./bin/destill build "https://buildkite.com/org/pipeline/builds/123"
 ```
 
 **Advantages**:
