@@ -28,17 +28,17 @@ This directory contains the Docker Compose configuration for the Destill Agentic
 - **Port**: `4195` (HTTP API for monitoring)
 - **Config**: `connect.yaml`
 - **Consumer Group**: `destill-postgres-sink`
-- **Monitoring**: Visible in Redpanda Console under "Connect" tab
+- **Monitoring**: Via HTTP endpoints - see `MONITORING_CONNECT.md`
 
 ### Redpanda Console
-- **Purpose**: Web UI for monitoring Redpanda topics and connectors
+- **Purpose**: Web UI for monitoring Redpanda topics
 - **Port**: `8080`
 - **URL**: http://localhost:8080
 - **Features**:
   - Topic browser and message viewer
   - Consumer group monitoring
   - Schema registry
-  - **Redpanda Connect monitoring** (connector status and metrics)
+  - **Note**: Console's "Connect" tab is for Kafka Connect only, not Redpanda Connect
 
 ## Quick Start
 
@@ -122,7 +122,22 @@ Open http://localhost:8080 in your browser to view:
 - Topics and their messages
 - Consumer groups
 - Schema registry
-- **Connect tab**: Redpanda Connect status and metrics
+
+### Monitor Redpanda Connect
+Redpanda Connect uses its own API (not compatible with Console's Connect tab):
+
+```bash
+# Health check
+curl http://localhost:4195/ready
+
+# Metrics (Prometheus format)
+curl http://localhost:4195/stats
+
+# Quick stats
+curl -s http://localhost:4195/stats | grep -E "^(input_received|output_sent)" | grep -v "#"
+```
+
+See `MONITORING_CONNECT.md` for detailed monitoring guide.
 
 ## Environment Variables
 

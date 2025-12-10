@@ -72,13 +72,10 @@ services:
       KAFKA_BROKERS: redpanda:9092
       KAFKA_SCHEMAREGISTRY_ENABLED: "true"
       KAFKA_SCHEMAREGISTRY_URLS: http://redpanda:8081
-      # Redpanda Connect configuration
-      CONNECT_ENABLED: "true"
-      CONNECT_CLUSTERS_NAME: destill-connect
-      CONNECT_CLUSTERS_URL: http://redpanda-connect:4195
+      # Note: Console's "Connect" feature is for Kafka Connect only
+      # Redpanda Connect (Benthos) uses a different API - monitor via HTTP endpoints
     depends_on:
       - redpanda
-      - redpanda-connect
 
 volumes:
   redpanda-data:
