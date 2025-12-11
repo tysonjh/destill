@@ -77,25 +77,28 @@ It uses a stream processing architecture with:
 
 // viewCmd represents the view command for querying findings from Postgres
 var viewCmd = &cobra.Command{
-	Use:   "view <request-id>",
+	Use:   "view <request-id-or-url>",
 	Short: "View findings from Postgres in TUI (distributed mode)",
-	Long: `Queries Postgres for findings associated with a request ID and displays them
-in an interactive TUI.
+	Long: `Queries Postgres for findings and displays them in an interactive TUI.
 
 This command is for distributed mode where:
 - Agents (destill-ingest, destill-analyze) are running separately
 - Findings are stored in Postgres
-- You have a request ID from a previous build submission
+- You have a request ID from a previous build submission OR a build URL
 
-Example:
+If you provide a build URL, it will automatically find the most recent request
+for that build.
+
+Examples:
   destill view req-1733769623456789
+  destill view https://buildkite.com/org/pipeline/builds/123
 
 Environment variables:
   POSTGRES_DSN - Required. Postgres connection string
                  Example: postgres://destill:destill@localhost:5432/destill?sslmode=disable`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		requestID := args[0]
+		arg := args[0]
 
 		// Get Postgres DSN from environment
 		postgresDSN := os.Getenv("POSTGRES_DSN")
@@ -114,8 +117,28 @@ Environment variables:
 		}
 		defer postgresStore.Close()
 
-		// Query findings
 		ctx := context.Background()
+
+		// Detect if arg is a URL or request ID
+		var requestID string
+		if isURL(arg) {
+			// It's a build URL - find the latest request
+			fmt.Printf("Looking up latest request for build URL...\n")
+			requestID, err = postgresStore.GetLatestRequestByBuildURL(ctx, arg)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to find request for build URL: %v\n", err)
+				fmt.Fprintln(os.Stderr, "\nPossible reasons:")
+				fmt.Fprintln(os.Stderr, "  • No request exists for this build URL")
+				fmt.Fprintln(os.Stderr, "  • Use 'destill submit <url>' to submit a new analysis")
+				os.Exit(1)
+			}
+			fmt.Printf("Found request: %s\n", requestID)
+		} else {
+			// It's a request ID
+			requestID = arg
+		}
+
+		// Query findings
 		fmt.Printf("Querying findings for request: %s\n", requestID)
 		findings, err := postgresStore.GetFindings(ctx, requestID)
 		if err != nil {
@@ -141,6 +164,11 @@ Environment variables:
 			os.Exit(1)
 		}
 	},
+}
+
+// isURL checks if a string looks like a URL
+func isURL(s string) bool {
+	return len(s) > 4 && (s[:4] == "http" || s[:5] == "https")
 }
 
 // getRecurrenceCount extracts the recurrence count from metadata

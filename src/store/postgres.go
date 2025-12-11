@@ -105,6 +105,28 @@ func (s *PostgresStore) GetFindings(ctx context.Context, requestID string) ([]co
 	return findings, nil
 }
 
+// GetLatestRequestByBuildURL retrieves the most recent request ID for a given build URL.
+func (s *PostgresStore) GetLatestRequestByBuildURL(ctx context.Context, buildURL string) (string, error) {
+	query := `
+		SELECT request_id
+		FROM requests
+		WHERE build_url = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`
+
+	var requestID string
+	err := s.db.QueryRowContext(ctx, query, buildURL).Scan(&requestID)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("no requests found for build URL: %s", buildURL)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to query request: %w", err)
+	}
+
+	return requestID, nil
+}
+
 // Close closes the database connection.
 func (s *PostgresStore) Close() error {
 	return s.db.Close()
