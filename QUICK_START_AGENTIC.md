@@ -38,14 +38,11 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ### 6. Analyze a Build
 ```bash
 # Terminal 3
-./bin/destill run "https://buildkite.com/org/pipeline/builds/123"
-# Note the request ID
+./bin/destill build "https://buildkite.com/org/pipeline/builds/123"
+# Note the request ID returned (e.g., req-1733769623456789)
 
-# View results
-./bin/destill view <request-id>
-
-# Check status
-./bin/destill status <request-id>
+# View results in TUI
+./bin/destill view req-1733769623456789
 ```
 
 ## 🔍 Monitoring

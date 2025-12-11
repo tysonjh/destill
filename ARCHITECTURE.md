@@ -110,18 +110,20 @@ Destill is a distributed log triage system for CI/CD pipelines using an agentic 
 
 **Indexes**: request_id, message_hash, confidence_score, created_at
 
-### 5. CLI (`destill`)
+### 5. CLI Tool (`destill`)
 
-**Purpose**: User interface with automatic mode detection
+**Unified CLI** with two subcommands:
 
-**Commands**:
-- `destill run <url>`: Submit build for analysis
-- `destill view <req-id>`: View findings in TUI
-- `destill status <req-id>`: Check request progress
+**`destill build <url>`** - Local Mode
+- **Purpose**: Local, in-memory build analysis with streaming TUI
+- **Mode**: Uses InMemoryBroker, no persistence required
+- **Usage**: `./bin/destill build "https://buildkite.com/org/pipeline/builds/123"`
 
-**Mode Detection**:
-- **Legacy**: No `REDPANDA_BROKERS` → in-memory broker
-- **Agentic**: `REDPANDA_BROKERS` set → distributed mode
+**`destill view <request-id>`** - Distributed Mode
+- **Purpose**: View findings from Postgres in TUI
+- **Requirements**: `POSTGRES_DSN` environment variable
+- **Features**: Converts TriageCardV2 → TriageCard, launches TUI
+- **Usage**: `./bin/destill view req-1733769623456789`
 
 ## Key Design Decisions
 
@@ -205,9 +207,11 @@ Redpanda Connect → Subscribe: destill.analysis.findings
 ### View
 ```
 User → destill view <req-id>
-     → Query: Postgres (request_id = ?)
-     → Sort: confidence_score DESC
-     → Display: TUI with findings
+     → Load config (POSTGRES_DSN)
+     → Connect: Postgres
+     → Query: GetFindings(request_id)
+     → Convert: TriageCardV2 → TriageCard
+     → Display: TUI with findings (sorted by confidence)
 ```
 
 ## Scalability
@@ -255,7 +259,7 @@ make build
 ```
 
 Produces:
-- `bin/destill` - Main CLI
+- `bin/destill` - Unified CLI (`build` and `view` commands)
 - `bin/destill-ingest` - Ingest agent
 - `bin/destill-analyze` - Analyze agent
 

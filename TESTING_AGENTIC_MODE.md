@@ -17,7 +17,7 @@ make build
 ```
 
 This creates:
-- `bin/destill` - Main CLI
+- `bin/destill` - Unified CLI (`build` and `view` commands)
 - `bin/destill-ingest` - Ingest agent
 - `bin/destill-analyze` - Analyze agent
 
@@ -231,7 +231,10 @@ Findings:         12
 
 You should see:
 ```
-📊 Found 12 findings for request: req-1733769623456789
+Connecting to Postgres...
+Querying findings for request: req-1733769623456789
+
+✅ Found 12 findings
 Launching TUI...
 ```
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ import (
 	"destill-agent/src/config"
 	"destill-agent/src/contracts"
 	"destill-agent/src/logger"
+	"destill-agent/src/store"
 	"destill-agent/src/tui"
 )
 
@@ -44,6 +46,11 @@ It uses a stream processing architecture with:
 - Ingestion Agent: Consumes requests and fetches raw logs
 - Analysis Agent: Processes logs and produces ranked failure cards`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Skip initialization for view command (doesn't need broker or config)
+		if cmd.Name() == "view" {
+			return
+		}
+
 		// Load configuration from environment variables
 		var err error
 		appConfig, err = config.LoadFromEnv()
@@ -81,53 +88,70 @@ It uses a stream processing architecture with:
 	},
 }
 
-// analyzeCmd represents the analyze command
-var analyzeCmd = &cobra.Command{
-	Use:   "analyze",
-	Short: "Launch the TUI to view existing triage cards (requires persistent broker)",
-	Long: `Waits for triage cards to appear on the ci_failures_ranked topic and displays them
+// viewCmd represents the view command for querying findings from Postgres
+var viewCmd = &cobra.Command{
+	Use:   "view <request-id>",
+	Short: "View findings from Postgres in TUI (distributed mode)",
+	Long: `Queries Postgres for findings associated with a request ID and displays them
 in an interactive TUI.
 
-This command is useful when:
-- Using a persistent message broker (Redpanda, Kafka, etc.) where data survives between processes
-- Running alongside other processes that are producing triage cards
-- Viewing results from previously submitted builds
-
-For in-memory broker: Use 'destill build <url>' instead, which runs the
-complete pipeline in a single process with streaming TUI.
+This command is for distributed mode where:
+- Agents (destill-ingest, destill-analyze) are running separately
+- Findings are stored in Postgres
+- You have a request ID from a previous build submission
 
 Example:
-  destill analyze`,
+  destill view req-1733769623456789
+
+Environment variables:
+  POSTGRES_DSN - Required. Postgres connection string
+                 Example: postgres://destill:destill@localhost:5432/destill?sslmode=disable`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("Destill Analysis Mode")
-		fmt.Println("=====================")
-		fmt.Println("Waiting for triage cards (5 seconds)...")
-		fmt.Println()
+		requestID := args[0]
 
-		// Collect triage cards from the ci_failures_ranked topic
-		cards := collectTriageCards(5 * time.Second)
-
-		if len(cards) == 0 {
-			fmt.Println("⚠️  No failure cards collected.")
-			fmt.Println()
-			fmt.Println("💡 Tips:")
-			fmt.Println("   • With in-memory broker: Use 'destill build <url>' (TUI is default)")
-			fmt.Println("   • With persistent broker: Ensure builds have been submitted via 'destill build <url> --detach'")
-			return
+		// Get Postgres DSN from environment
+		postgresDSN := os.Getenv("POSTGRES_DSN")
+		if postgresDSN == "" {
+			fmt.Fprintln(os.Stderr, "ERROR: POSTGRES_DSN environment variable is required")
+			fmt.Fprintln(os.Stderr, "Example: export POSTGRES_DSN=\"postgres://destill:destill@localhost:5432/destill?sslmode=disable\"")
+			os.Exit(1)
 		}
 
-		// Sort cards by confidence score (descending), then by recurrence count
-		sort.Slice(cards, func(i, j int) bool {
-			if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
-				return cards[i].ConfidenceScore > cards[j].ConfidenceScore
-			}
-			// Extract recurrence count from metadata for sorting
-			countI := getRecurrenceCount(cards[i])
-			countJ := getRecurrenceCount(cards[j])
-			return countI > countJ
-		})
+		// Connect to Postgres
+		fmt.Printf("Connecting to Postgres...\n")
+		postgresStore, err := store.NewPostgresStore(postgresDSN)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to connect to Postgres: %v\n", err)
+			os.Exit(1)
+		}
+		defer postgresStore.Close()
 
-		// Launch the TUI
+		// Query findings
+		ctx := context.Background()
+		fmt.Printf("Querying findings for request: %s\n", requestID)
+		findings, err := postgresStore.GetFindings(ctx, requestID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to query findings: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(findings) == 0 {
+			fmt.Printf("\nNo findings found for request: %s\n", requestID)
+			fmt.Println("\nPossible reasons:")
+			fmt.Println("  • Request ID doesn't exist (check: SELECT * FROM requests;)")
+			fmt.Println("  • Analysis hasn't completed yet")
+			fmt.Println("  • No errors were found in the build logs")
+			os.Exit(0)
+		}
+
+		// Convert TriageCardV2 to TriageCard for TUI compatibility
+		cards := convertToTriageCards(findings)
+
+		fmt.Printf("\n✅ Found %d findings\n", len(cards))
+		fmt.Println("Launching TUI...\n")
+
+		// Launch TUI
 		if err := tui.Start(cards); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
@@ -135,38 +159,29 @@ Example:
 	},
 }
 
-// collectTriageCards subscribes to ci_failures_ranked and collects cards for a duration
-func collectTriageCards(duration time.Duration) []contracts.TriageCard {
-	var cards []contracts.TriageCard
+// convertToTriageCards converts TriageCardV2 (Postgres format) to TriageCard (TUI format)
+func convertToTriageCards(findings []contracts.TriageCardV2) []contracts.TriageCard {
+	cards := make([]contracts.TriageCard, len(findings))
 
-	ctx, cancel := context.WithTimeout(context.Background(), duration)
-	defer cancel()
-
-	// Subscribe to the ranked failures topic
-	rankChan, err := msgBroker.Subscribe(ctx, "ci_failures_ranked", "cli-collector")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error subscribing to ci_failures_ranked: %v\n", err)
-		return cards
-	}
-
-	// Collect cards for the specified duration
-	for {
-		select {
-		case msg, ok := <-rankChan:
-			if !ok {
-				return cards
-			}
-			var card contracts.TriageCard
-			if err := json.Unmarshal(msg.Value, &card); err != nil {
-				fmt.Fprintf(os.Stderr, "Error unmarshaling triage card: %v\n", err)
-				continue
-			}
-			cards = append(cards, card)
-
-		case <-ctx.Done():
-			return cards
+	for i, finding := range findings {
+		cards[i] = contracts.TriageCard{
+			ID:              finding.ID,
+			Source:          finding.Source,
+			Timestamp:       finding.Timestamp,
+			Severity:        finding.Severity,
+			Message:         finding.NormalizedMsg,
+			RawMessage:      finding.RawMessage,
+			Metadata:        finding.Metadata,
+			RequestID:       finding.RequestID,
+			MessageHash:     finding.MessageHash,
+			JobName:         finding.JobName,
+			ConfidenceScore: finding.ConfidenceScore,
+			PreContext:      strings.Join(finding.PreContext, "\n"),
+			PostContext:     strings.Join(finding.PostContext, "\n"),
 		}
 	}
+
+	return cards
 }
 
 // getRecurrenceCount extracts the recurrence count from metadata
@@ -180,39 +195,6 @@ func getRecurrenceCount(card contracts.TriageCard) int {
 		return c
 	}
 	return 1
-}
-
-// groupCardsByHash combines triage cards with the same message hash
-// Returns a deduplicated list with recurrence counts
-func groupCardsByHash(cards []contracts.TriageCard) []contracts.TriageCard {
-	hashMap := make(map[string]*contracts.TriageCard)
-
-	for _, card := range cards {
-		if existing, found := hashMap[card.MessageHash]; found {
-			// Increment recurrence count
-			count := getRecurrenceCount(*existing) + 1
-			if existing.Metadata == nil {
-				existing.Metadata = make(map[string]string)
-			}
-			existing.Metadata["recurrence_count"] = fmt.Sprintf("%d", count)
-		} else {
-			// First occurrence - create a copy and initialize count
-			cardCopy := card
-			if cardCopy.Metadata == nil {
-				cardCopy.Metadata = make(map[string]string)
-			}
-			cardCopy.Metadata["recurrence_count"] = "1"
-			hashMap[card.MessageHash] = &cardCopy
-		}
-	}
-
-	// Convert map to slice
-	grouped := make([]contracts.TriageCard, 0, len(hashMap))
-	for _, card := range hashMap {
-		grouped = append(grouped, *card)
-	}
-
-	return grouped
 }
 
 // buildCmd represents the build command
@@ -371,8 +353,8 @@ func startStreamPipeline() {
 }
 
 func init() {
-	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(viewCmd)
 
 	// Add --detach flag to build command (TUI is now the default)
 	buildCmd.Flags().BoolP("detach", "d", false, "Detach mode: submit request and exit without launching TUI")

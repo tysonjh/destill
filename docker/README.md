@@ -182,11 +182,4 @@ docker-compose down -v
 docker-compose up -d
 ```
 
-## Next Steps
-
-- **Phase 2**: Implement broker and pipeline interfaces
-- **Phase 3**: Implement ingest agent
-- **Phase 4**: Implement analyze agent
-- **Phase 5**: Configure and test Redpanda Connect
-- **Phase 6**: Implement TUI and orchestration
 

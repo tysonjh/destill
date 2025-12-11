@@ -81,7 +81,7 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 
 ### Binaries
 
-- **`bin/destill`** - Local mode CLI with `build` command and streaming TUI
+- **`bin/destill`** - Unified CLI with `build` (local mode) and `view` (distributed mode) commands
 - **`bin/destill-ingest`** - Standalone ingest agent (distributed mode)
 - **`bin/destill-analyze`** - Standalone analyze agent (distributed mode)
 
@@ -128,9 +128,9 @@ make test-coverage
 ```
 
 **Binaries produced**:
-- `bin/destill` - Main CLI (local or distributed mode)
-- `bin/destill-ingest` - Ingest agent
-- `bin/destill-analyze` - Analyze agent
+- `bin/destill` - Unified CLI (`build` and `view` commands)
+- `bin/destill-ingest` - Ingest agent (distributed mode)
+- `bin/destill-analyze` - Analyze agent (distributed mode)
 
 ### Install
 
@@ -159,15 +159,17 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-ingest
 ./bin/destill-analyze
 
-# Agents automatically process builds as they come in
-# Findings are stored in Postgres
+# Agents automatically process builds and store findings in Postgres
+# You'll get a request ID when you submit a build with: destill build <url>
 
-# Query findings from Postgres
+# View findings in TUI (replace with your actual request ID)
+./bin/destill view req-1733769623456789
+
+# Or query findings from Postgres directly
 docker exec -it destill-postgres psql -U destill -d destill \
   -c "SELECT severity, confidence_score, LEFT(raw_message, 80) FROM findings ORDER BY confidence_score DESC LIMIT 10;"
 
-# Or view in Redpanda Console at http://localhost:8080
-# Note: TUI integration for distributed mode is planned for a future release 
+# Or view in Redpanda Console at http://localhost:8080 
 ```
 
 **Advantages**:

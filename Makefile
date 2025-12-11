@@ -55,7 +55,7 @@ help:
 	@echo "  help            - Show this help message"
 	@echo ""
 	@echo "Binaries:"
-	@echo "  bin/destill         - Main CLI (local mode with broker)"
+	@echo "  bin/destill         - Main CLI (build: local mode, view: distributed mode)"
 	@echo "  bin/destill-ingest  - Standalone ingest agent"
 	@echo "  bin/destill-analyze - Standalone analyze agent"
 
