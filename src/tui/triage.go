@@ -121,7 +121,7 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCardV2) e
 	if brk != nil {
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
-		cardChan, err = brk.Subscribe(ctx, "ci_failures_ranked", "tui-consumer")
+		cardChan, err = brk.Subscribe(ctx, contracts.TopicAnalysisFindings, "tui-consumer")
 		if err != nil {
 			if cancel != nil {
 				cancel()
