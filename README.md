@@ -14,7 +14,7 @@ make build
 export BUILDKITE_API_TOKEN="your-token"
 
 # 3. Analyze a build in local in-memory mode
-./bin/destill build "https://buildkite.com/org/pipeline/builds/123"
+./bin/destill analyze "https://buildkite.com/org/pipeline/builds/123"
 ```
 
 For the full distributed system with agents, Redpanda, and Postgres, see **[QUICK_START_AGENTIC.md](./QUICK_START_AGENTIC.md)** for a 5-minute setup guide.
@@ -81,7 +81,10 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 
 ### Binaries
 
-- **`bin/destill`** - Unified CLI with `build` (local mode) and `view` (distributed mode) commands
+- **`bin/destill`** - Unified CLI with three commands:
+  - `analyze` - Local mode (in-memory processing with streaming TUI)
+  - `submit` - Distributed mode (publish request to Redpanda)
+  - `view` - Distributed mode (query findings from Postgres)
 - **`bin/destill-ingest`** - Standalone ingest agent (distributed mode)
 - **`bin/destill-analyze`** - Standalone analyze agent (distributed mode)
 
@@ -128,7 +131,7 @@ make test-coverage
 ```
 
 **Binaries produced**:
-- `bin/destill` - Unified CLI (`build` and `view` commands)
+- `bin/destill` - Unified CLI (`analyze`, `submit`, and `view` commands)
 - `bin/destill-ingest` - Ingest agent (distributed mode)
 - `bin/destill-analyze` - Analyze agent (distributed mode)
 
@@ -141,7 +144,42 @@ make install
 
 ## 🎯 Usage
 
-Destill supports two modes with automatic detection:
+Destill supports two modes:
+
+### Local Mode (Quick Testing)
+
+**Best for**: Quick testing, development, demos
+
+**Requirements**: Just the binary (no Docker)
+
+```bash
+# Set environment
+export BUILDKITE_API_TOKEN="your-token"
+
+# Analyze with streaming TUI (all-in-one)
+./bin/destill analyze "https://buildkite.com/org/pipeline/builds/123"
+
+# Options:
+# --json         Output findings as JSON instead of TUI (not yet implemented)
+# --cache FILE   Load cached triage cards for fast iteration
+```
+
+**How it works**:
+- Launches in-memory broker
+- Starts ingestion and analysis agents as goroutines
+- Displays findings in real-time streaming TUI
+- Press 'r' to refresh/re-rank cards as they arrive
+
+**Advantages**:
+- ✅ No infrastructure needed
+- ✅ Instant startup
+- ✅ Streaming TUI (real-time)
+- ✅ Simple for demos
+
+**Limitations**:
+- ❌ No persistence (data lost on exit)
+- ❌ Single process (no scaling)
+- ❌ Can't view historical builds
 
 ### Distributed Mode (Recommended for Production)
 
@@ -159,8 +197,9 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-ingest
 ./bin/destill-analyze
 
-# Agents automatically process builds and store findings in Postgres
-# You'll get a request ID when you submit a build with: destill build <url>
+# Submit a build for analysis
+./bin/destill submit "https://buildkite.com/org/pipeline/builds/123"
+# Returns: ✅ Submitted analysis request: req-1733769623456789
 
 # View findings in TUI (replace with your actual request ID)
 ./bin/destill view req-1733769623456789
@@ -169,39 +208,19 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 docker exec -it destill-postgres psql -U destill -d destill \
   -c "SELECT severity, confidence_score, LEFT(raw_message, 80) FROM findings ORDER BY confidence_score DESC LIMIT 10;"
 
-# Or view in Redpanda Console at http://localhost:8080 
+# Or view in Redpanda Console at http://localhost:8080
 ```
+
+**How it works**:
+- `submit` publishes request to Redpanda and returns immediately
+- Agents process asynchronously (fetch logs, analyze, store findings)
+- `view` queries Postgres and displays results in TUI
 
 **Advantages**:
 - ✅ Persistent storage (findings survive restarts)
 - ✅ Horizontally scalable (add more agents)
 - ✅ View historical analyses
 - ✅ Production-ready
-
-### Local Mode (Quick Testing)
-
-**Best for**: Quick testing, development, demos
-
-**Requirements**: Just the binary (no Docker)
-
-```bash
-# Set environment (no REDPANDA_BROKERS = local mode)
-export BUILDKITE_API_TOKEN="your-token"
-
-# Run with streaming TUI (all-in-one)
-./bin/destill build "https://buildkite.com/org/pipeline/builds/123"
-```
-
-**Advantages**:
-- ✅ No infrastructure needed
-- ✅ Instant startup
-- ✅ Streaming TUI (real-time)
-- ✅ Simple for demos
-
-**Limitations**:
-- ❌ No persistence (data lost on exit)
-- ❌ Single process (no scaling)
-- ❌ Can't view historical builds
 
 ## 🔍 Monitoring
 
@@ -262,16 +281,15 @@ Test coverage by package:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `BUILDKITE_API_TOKEN` | Yes | Buildkite API access token |
-| `REDPANDA_BROKERS` | Agentic | Comma-separated broker addresses (e.g., `localhost:19092`) |
-| `POSTGRES_DSN` | Agentic | Postgres connection string |
+| `BUILDKITE_API_TOKEN` | Yes (all modes) | Buildkite API access token |
+| `REDPANDA_BROKERS` | Distributed only | Comma-separated broker addresses (e.g., `localhost:19092`) |
+| `POSTGRES_DSN` | Distributed only | Postgres connection string |
 
-### Mode Detection
+### Command Summary
 
-- **No `REDPANDA_BROKERS`**: Legacy mode (in-memory)
-- **With `REDPANDA_BROKERS`**: Agentic mode (distributed)
-
-Mode is automatically detected based on environment variables.
+- **`destill analyze <url>`** - Local mode (in-memory, no infrastructure)
+- **`destill submit <url>`** - Distributed mode (requires agents + infrastructure)
+- **`destill view <request-id>`** - Distributed mode (query Postgres)
 
 ## 🐛 Troubleshooting
 

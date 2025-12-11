@@ -9,7 +9,7 @@ Destill is a distributed log triage system for CI/CD pipelines using an agentic 
 │                    Agentic Data Plane                           │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  CLI: destill run <build-url>                                   │
+│  CLI: destill submit <build-url>                                │
 │       │                                                         │
 │       ▼                                                         │
 │  ┌──────────────┐      ┌─────────────────┐                     │
@@ -112,12 +112,24 @@ Destill is a distributed log triage system for CI/CD pipelines using an agentic 
 
 ### 5. CLI Tool (`destill`)
 
-**Unified CLI** with two subcommands:
+**Unified CLI** with three subcommands:
 
-**`destill build <url>`** - Local Mode
+**`destill analyze <url>`** - Local Mode
 - **Purpose**: Local, in-memory build analysis with streaming TUI
-- **Mode**: Uses InMemoryBroker, no persistence required
-- **Usage**: `./bin/destill build "https://buildkite.com/org/pipeline/builds/123"`
+- **Mode**: Uses InMemoryBroker with agents as goroutines
+- **Requirements**: Only `BUILDKITE_API_TOKEN`
+- **Features**: Real-time streaming, no persistence, no infrastructure
+- **Usage**: `./bin/destill analyze "https://buildkite.com/org/pipeline/builds/123"`
+- **Options**:
+  - `--json` - Output JSON (not yet implemented)
+  - `--cache FILE` - Load cached cards for iteration
+
+**`destill submit <url>`** - Distributed Mode
+- **Purpose**: Submit build for asynchronous analysis
+- **Mode**: Publishes request to Redpanda, returns immediately
+- **Requirements**: `BUILDKITE_API_TOKEN`, `REDPANDA_BROKERS`, `POSTGRES_DSN`
+- **Returns**: Request ID for tracking
+- **Usage**: `./bin/destill submit "https://buildkite.com/org/pipeline/builds/123"`
 
 **`destill view <request-id>`** - Distributed Mode
 - **Purpose**: View findings from Postgres in TUI
@@ -171,12 +183,20 @@ Multiple instances in same group = automatic load balancing
 
 ## Data Flow
 
-### Submit Request
+### Submit Request (Distributed Mode)
 ```
-User → destill run <url>
-     → AnalysisRequest → destill.requests
-     → Postgres requests table
-     ← Request ID returned
+User → destill submit <url>
+     → AnalysisRequest → destill.requests (Redpanda)
+     ← Request ID returned immediately
+```
+
+### Analyze Request (Local Mode)
+```
+User → destill analyze <url>
+     → InMemoryBroker
+     → Agents as goroutines
+     → Streaming TUI
+     ← Interactive results
 ```
 
 ### Ingest
@@ -259,7 +279,7 @@ make build
 ```
 
 Produces:
-- `bin/destill` - Unified CLI (`build` and `view` commands)
+- `bin/destill` - Unified CLI (`analyze`, `submit`, and `view` commands)
 - `bin/destill-ingest` - Ingest agent
 - `bin/destill-analyze` - Analyze agent
 

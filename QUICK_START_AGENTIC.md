@@ -35,13 +35,13 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 ./bin/destill-analyze
 ```
 
-### 6. Analyze a Build
+### 6. Submit a Build for Analysis
 ```bash
 # Terminal 3
-./bin/destill build "https://buildkite.com/org/pipeline/builds/123"
-# Note the request ID returned (e.g., req-1733769623456789)
+./bin/destill submit "https://buildkite.com/org/pipeline/builds/123"
+# Returns: ✅ Submitted analysis request: req-1733769623456789
 
-# View results in TUI
+# View results in TUI (wait a few seconds for processing)
 ./bin/destill view req-1733769623456789
 ```
 

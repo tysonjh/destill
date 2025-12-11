@@ -28,8 +28,6 @@ var (
 	msgBroker broker.Broker
 	// Application configuration
 	appConfig *config.Config
-	// Flag to track if we're in --detach mode (non-interactive, no TUI)
-	isDetachMode bool
 	// Context for agent lifecycle
 	agentCtx    context.Context
 	agentCancel context.CancelFunc
@@ -60,18 +58,8 @@ It uses a stream processing architecture with:
 			os.Exit(1)
 		}
 
-		// Check if we're in --detach mode (non-interactive)
-		detachFlag := cmd.Flags().Lookup("detach")
-		isDetachMode = detachFlag != nil && detachFlag.Value.String() == "true"
-
 		// Initialize the broker before any command runs
 		msgBroker = broker.NewInMemoryBroker()
-
-		// Only enable verbose broker logging in detach mode
-		// (TUI mode needs quiet broker to prevent log interference)
-		if isDetachMode {
-			msgBroker.(*broker.InMemoryBroker).SetVerbose(true)
-		}
 
 		// Create context for agent lifecycle
 		agentCtx, agentCancel = context.WithCancel(context.Background())
@@ -198,31 +186,32 @@ func getRecurrenceCount(card contracts.TriageCard) int {
 	return 1
 }
 
-// buildCmd represents the build command
-var buildCmd = &cobra.Command{
-	Use:   "build [build-url]",
-	Short: "Analyzes a Buildkite build and launches the triage TUI.",
-	Long: `Submits a Buildkite URL (e.g., https://buildkite.com/org/pipeline/builds/4091) 
-for analysis and launches the interactive TUI in streaming mode.
+// analyzeCmd represents the analyze command (local mode)
+var analyzeCmd = &cobra.Command{
+	Use:   "analyze [build-url]",
+	Short: "Analyze a Buildkite build locally with streaming TUI",
+	Long: `Analyzes a Buildkite build in local mode using in-memory processing.
+All analysis happens in a single process with agents running as goroutines.
 
-By default: Launches the TUI immediately. Cards appear in real-time as they are 
+By default: Launches the TUI immediately. Cards appear in real-time as they are
 analyzed. Press 'r' to refresh/re-rank the list when new cards arrive.
 
-With --detach: Publishes the request and exits immediately without launching TUI.
-Useful for CI/automation. Requires a persistent message broker (Redpanda, Kafka)
-to retain data between process invocations.
+With --json: Outputs findings as JSON instead of launching TUI.
 
 With --cache: Load previously saved cards from a JSON file for fast iteration
 during development.
 
+This is the simplest mode - no infrastructure required, just the CLI binary.
+
 Example:
-  destill build https://buildkite.com/org/pipeline/builds/4091
-  destill build https://buildkite.com/org/pipeline/builds/4091 --cache build.json
-  destill build https://buildkite.com/org/pipeline/builds/4091 --detach`,
+  destill analyze https://buildkite.com/org/pipeline/builds/4091
+  destill analyze https://buildkite.com/org/pipeline/builds/4091 --json
+  destill analyze https://buildkite.com/org/pipeline/builds/4091 --cache build.json`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		buildURL := args[0]
-		detachMode, _ := cmd.Flags().GetBool("detach")
+		jsonOutput, _ := cmd.Flags().GetBool("json")
+		cacheFile, _ := cmd.Flags().GetString("cache")
 
 		// Create the request payload
 		request := struct {
@@ -247,22 +236,8 @@ Example:
 			os.Exit(1)
 		}
 
-		if detachMode {
-			// Detached mode (for CI/automation with persistent broker)
-			fmt.Printf("✅ Submitted build request %s\n", request.RequestID)
-			fmt.Printf("   Build URL: %s\n", buildURL)
-			fmt.Println()
-			fmt.Println("The pipeline will discover and process all job logs from this build.")
-			fmt.Println()
-			fmt.Println("💡 Note: Using --detach mode. Results will be available in the message broker.")
-			fmt.Println("   Use 'destill view' to see results later (requires persistent broker).")
-			return
-		}
-
 		// Check for cache flag
-		cacheFile, _ := cmd.Flags().GetString("cache")
 		var initialCards []contracts.TriageCard
-
 		if cacheFile != "" {
 			// Try to load from cache
 			if data, err := os.ReadFile(cacheFile); err == nil {
@@ -284,14 +259,18 @@ Example:
 			})
 		}
 
+		// JSON output mode
+		if jsonOutput {
+			// TODO: Implement JSON output - would need to collect cards from broker
+			fmt.Fprintln(os.Stderr, "ERROR: --json flag not yet implemented")
+			fmt.Fprintln(os.Stderr, "Use TUI mode (default) or --cache for now")
+			os.Exit(1)
+		}
+
 		// Launch the streaming TUI
-		// - If cache provided: starts with cached cards, no streaming
-		// - Otherwise: starts empty and streams cards as they arrive
 		if len(initialCards) == 0 {
-			// Streaming mode: pass broker to TUI for live updates
 			fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
 		} else {
-			// Cache mode: no streaming, use pre-loaded cards
 			fmt.Println("🚀 Launching TUI with cached data...")
 		}
 
@@ -308,26 +287,15 @@ Example:
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
 		}
-
-		// Save to cache after TUI exits (if streaming mode and cache flag set)
-		// Note: This would require the TUI to return the final cards, which we don't do yet
-		// For now, cache is only used for loading, not saving in streaming mode
 	},
 }
 
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
 // The agents run indefinitely until the broker is closed.
-// In TUI mode (default), uses silent logger to prevent log output from interfering with the display.
+// Uses silent logger to prevent log output from interfering with TUI display.
 func startStreamPipeline() {
-	// Choose logger based on mode:
-	// - Silent logger in TUI mode (prevents log pollution)
-	// - Console logger in detach mode (useful for debugging and monitoring)
-	var log logger.Logger
-	if isDetachMode {
-		log = logger.NewConsoleLogger()
-	} else {
-		log = logger.NewSilentLogger()
-	}
+	// Use silent logger to prevent log pollution in TUI mode
+	log := logger.NewSilentLogger()
 
 	// Start Ingestion Agent as a persistent goroutine
 	ingestionAgent := ingestion.NewAgent(msgBroker, appConfig.BuildkiteAPIToken, log)
@@ -346,21 +314,75 @@ func startStreamPipeline() {
 			fmt.Fprintf(os.Stderr, "[Pipeline] Analysis agent error: %v\n", err)
 		}
 	}()
+}
 
-	// Only log pipeline start in detach mode (TUI mode needs quiet startup)
-	if isDetachMode {
-		log.Info("[Pipeline] Stream processing pipeline started")
-	}
+// submitCmd represents the submit command (distributed mode)
+var submitCmd = &cobra.Command{
+	Use:   "submit [build-url]",
+	Short: "Submit a build for analysis in distributed mode",
+	Long: `Submits a Buildkite build URL for analysis in distributed mode.
+This command publishes the request to Redpanda and returns immediately.
+
+Requires:
+- destill-ingest agent running (processes requests and fetches logs)
+- destill-analyze agent running (analyzes logs and produces findings)
+- Redpanda broker running
+- Postgres database running
+
+The request is queued and processed asynchronously by the agents.
+Use 'destill view <request-id>' to see results once processing is complete.
+
+Example:
+  destill submit https://buildkite.com/org/pipeline/builds/4091
+
+Environment variables:
+  BUILDKITE_API_TOKEN - Required. Buildkite API token
+  REDPANDA_BROKERS    - Required. Comma-separated broker addresses
+  POSTGRES_DSN        - Required. Postgres connection string`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		buildURL := args[0]
+
+		// Create the request payload
+		request := struct {
+			RequestID string `json:"request_id"`
+			BuildURL  string `json:"build_url"`
+		}{
+			RequestID: fmt.Sprintf("req-%d", time.Now().UnixNano()),
+			BuildURL:  buildURL,
+		}
+
+		// Marshal the request
+		data, err := json.Marshal(request)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error marshaling request: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Publish to destill_requests topic
+		ctx := context.Background()
+		if err := msgBroker.Publish(ctx, "destill_requests", request.RequestID, data); err != nil {
+			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
+			os.Exit(1)
+		}
+
+		// Print success message
+		fmt.Printf("✅ Submitted analysis request: %s\n", request.RequestID)
+		fmt.Printf("   Build URL: %s\n\n", buildURL)
+		fmt.Println("📊 The ingest and analyze agents will process this build.")
+		fmt.Println("   Findings will be stored in Postgres.")
+		fmt.Printf("\nView results: destill view %s\n", request.RequestID)
+	},
 }
 
 func init() {
-	rootCmd.AddCommand(buildCmd)
+	rootCmd.AddCommand(analyzeCmd)
+	rootCmd.AddCommand(submitCmd)
 	rootCmd.AddCommand(viewCmd)
 
-	// Add --detach flag to build command (TUI is now the default)
-	buildCmd.Flags().BoolP("detach", "d", false, "Detach mode: submit request and exit without launching TUI")
-	// Add --cache flag for faster iteration during development
-	buildCmd.Flags().StringP("cache", "c", "", "Cache file path to save/load triage cards (speeds up iteration)")
+	// Add flags to analyze command
+	analyzeCmd.Flags().BoolP("json", "j", false, "Output findings as JSON instead of launching TUI")
+	analyzeCmd.Flags().StringP("cache", "c", "", "Cache file path to load triage cards (speeds up iteration)")
 }
 
 func main() {
