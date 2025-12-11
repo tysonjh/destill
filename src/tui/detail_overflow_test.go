@@ -19,16 +19,16 @@ func TestDetailPanel_PlainLongLinesOverflow(t *testing.T) {
 	longLine2 := strings.Repeat("Another extremely long line with no special characters just regular words that keep going on and on ", 4)
 	longLine3 := strings.Repeat("The quick brown fox jumps over the lazy dog again and again creating a very long line of text ", 6)
 
-	cards := []contracts.TriageCard{
+	cards := []contracts.TriageCardV2{
 		{
 			ID:              "overflow-test",
 			JobName:         "backend-service",
-			Message:         longLine1,
+			NormalizedMsg:   longLine1,
 			MessageHash:     "hash123",
 			ConfidenceScore: 0.95,
 			Severity:        "HIGH",
-			PreContext:      longLine2 + "\n" + longLine3,
-			PostContext:     longLine1,
+			PreContext:      []string{longLine2, longLine3},
+			PostContext:     []string{longLine1},
 		},
 	}
 
@@ -103,16 +103,16 @@ func TestDetailPanel_VeryLongSingleWord(t *testing.T) {
 	// Create a super long "word" (no spaces) that exceeds any reasonable width
 	longWord := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 20) // 520 characters
 
-	cards := []contracts.TriageCard{
+	cards := []contracts.TriageCardV2{
 		{
 			ID:              "long-word-test",
 			JobName:         "test-job",
-			Message:         longWord,
+			NormalizedMsg:   longWord,
 			MessageHash:     "hash456",
 			ConfidenceScore: 0.90,
 			Severity:        "MEDIUM",
-			PreContext:      longWord,
-			PostContext:     longWord,
+			PreContext:      []string{longWord},
+			PostContext:     []string{longWord},
 		},
 	}
 
@@ -147,22 +147,22 @@ func TestDetailPanel_VeryLongSingleWord(t *testing.T) {
 func TestDetailPanel_MixedContentWithLongLines(t *testing.T) {
 	longError := "Error: Failed to connect to database server at hostname-that-is-very-long-for-some-reason.example.com:5432 with credentials user=admin database=production_database timeout=30s retry_count=3 ssl_mode=require connection_pool_size=50"
 
-	preContext := strings.Join([]string{
+	preContext := []string{
 		"Starting database connection initialization sequence for production environment",
 		"Loaded configuration from /etc/myapp/config/production.yaml with overrides from environment variables",
 		longError,
-	}, "\n")
+	}
 
-	postContext := strings.Join([]string{
+	postContext := []string{
 		"Attempted fallback to secondary database server at backup-hostname-also-quite-long.example.com:5432 but connection failed as well",
 		"Rolling back transaction and cleaning up resources allocated during the failed connection attempt",
-	}, "\n")
+	}
 
-	cards := []contracts.TriageCard{
+	cards := []contracts.TriageCardV2{
 		{
 			ID:              "mixed-content-test",
 			JobName:         "database-init",
-			Message:         longError,
+			NormalizedMsg:   longError,
 			MessageHash:     "hash789",
 			ConfidenceScore: 0.88,
 			Severity:        "CRITICAL",

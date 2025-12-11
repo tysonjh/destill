@@ -8,7 +8,7 @@ import (
 // Searches in message, job name, hash, severity, and context lines.
 func itemMatchesQuery(item Item, query string) bool {
 	// Search in primary fields
-	if strings.Contains(strings.ToLower(item.Card.Message), query) ||
+	if strings.Contains(strings.ToLower(item.Card.NormalizedMsg), query) ||
 		strings.Contains(strings.ToLower(item.Card.JobName), query) ||
 		strings.Contains(strings.ToLower(item.Card.MessageHash), query) ||
 		strings.Contains(strings.ToLower(item.Card.Severity), query) {

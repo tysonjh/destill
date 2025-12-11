@@ -76,7 +76,7 @@ func getSnippetText(entry Item) string {
 	}
 
 	// Fall back to Message (normalized) for backwards compatibility
-	cleanMsg := CleanLogText(entry.Card.Message)
+	cleanMsg := CleanLogText(entry.Card.NormalizedMsg)
 	if strings.TrimSpace(cleanMsg) != "" {
 		return cleanMsg
 	}

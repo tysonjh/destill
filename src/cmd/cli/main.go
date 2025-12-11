@@ -8,16 +8,15 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"destill-agent/src/analyze"
 	"destill-agent/src/broker"
-	"destill-agent/src/cmd/analysis"
-	"destill-agent/src/cmd/ingestion"
 	"destill-agent/src/config"
 	"destill-agent/src/contracts"
+	"destill-agent/src/ingest"
 	"destill-agent/src/logger"
 	"destill-agent/src/store"
 	"destill-agent/src/tui"
@@ -133,51 +132,23 @@ Environment variables:
 			os.Exit(0)
 		}
 
-		// Convert TriageCardV2 to TriageCard for TUI compatibility
-		cards := convertToTriageCards(findings)
-
-		fmt.Printf("\n✅ Found %d findings\n", len(cards))
+		fmt.Printf("\n✅ Found %d findings\n", len(findings))
 		fmt.Println("Launching TUI...")
 
-		// Launch TUI
-		if err := tui.Start(cards); err != nil {
+		// Launch TUI with TriageCardV2 directly
+		if err := tui.Start(findings); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
 		}
 	},
 }
 
-// convertToTriageCards converts TriageCardV2 (Postgres format) to TriageCard (TUI format)
-func convertToTriageCards(findings []contracts.TriageCardV2) []contracts.TriageCard {
-	cards := make([]contracts.TriageCard, len(findings))
-
-	for i, finding := range findings {
-		cards[i] = contracts.TriageCard{
-			ID:              finding.ID,
-			Source:          finding.Source,
-			Timestamp:       finding.Timestamp,
-			Severity:        finding.Severity,
-			Message:         finding.NormalizedMsg,
-			RawMessage:      finding.RawMessage,
-			Metadata:        finding.Metadata,
-			RequestID:       finding.RequestID,
-			MessageHash:     finding.MessageHash,
-			JobName:         finding.JobName,
-			ConfidenceScore: finding.ConfidenceScore,
-			PreContext:      strings.Join(finding.PreContext, "\n"),
-			PostContext:     strings.Join(finding.PostContext, "\n"),
-		}
-	}
-
-	return cards
-}
-
 // getRecurrenceCount extracts the recurrence count from metadata
-func getRecurrenceCount(card contracts.TriageCard) int {
-	if card.Metadata == nil {
+func getRecurrenceCount(metadata map[string]string) int {
+	if metadata == nil {
 		return 1
 	}
-	if count, ok := card.Metadata["recurrence_count"]; ok {
+	if count, ok := metadata["recurrence_count"]; ok {
 		var c int
 		if _, err := fmt.Sscanf(count, "%d", &c); err == nil {
 			return c
@@ -237,7 +208,7 @@ Example:
 		}
 
 		// Check for cache flag
-		var initialCards []contracts.TriageCard
+		var initialCards []contracts.TriageCardV2
 		if cacheFile != "" {
 			// Try to load from cache
 			if data, err := os.ReadFile(cacheFile); err == nil {
@@ -253,8 +224,8 @@ Example:
 				if initialCards[i].ConfidenceScore != initialCards[j].ConfidenceScore {
 					return initialCards[i].ConfidenceScore > initialCards[j].ConfidenceScore
 				}
-				countI := getRecurrenceCount(initialCards[i])
-				countJ := getRecurrenceCount(initialCards[j])
+				countI := getRecurrenceCount(initialCards[i].Metadata)
+				countJ := getRecurrenceCount(initialCards[j].Metadata)
 				return countI > countJ
 			})
 		}
@@ -298,7 +269,7 @@ func startStreamPipeline() {
 	log := logger.NewSilentLogger()
 
 	// Start Ingestion Agent as a persistent goroutine
-	ingestionAgent := ingestion.NewAgent(msgBroker, appConfig.BuildkiteAPIToken, log)
+	ingestionAgent := ingest.NewAgent(msgBroker, appConfig.BuildkiteAPIToken, log)
 	go func() {
 		if err := ingestionAgent.Run(agentCtx); err != nil && err != context.Canceled {
 			// Error logging always goes to stderr even in silent mode
@@ -307,7 +278,7 @@ func startStreamPipeline() {
 	}()
 
 	// Start Analysis Agent as a persistent goroutine
-	analysisAgent := analysis.NewAgent(msgBroker, log)
+	analysisAgent := analyze.NewAgent(msgBroker, log)
 	go func() {
 		if err := analysisAgent.Run(agentCtx); err != nil && err != context.Canceled {
 			// Error logging always goes to stderr even in silent mode

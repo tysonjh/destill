@@ -7,17 +7,17 @@ import (
 )
 
 // Item represents an item that can be displayed in the triage list.
-// It wraps the domain TriageCard and implements bubbles/list.Item.
+// It wraps the domain TriageCardV2 and implements bubbles/list.Item.
 type Item struct {
-	Card contracts.TriageCard
+	Card contracts.TriageCardV2
 	Rank int
 }
 
 // FilterValue is the value used for fuzzy filtering.
-func (i Item) FilterValue() string { return i.Card.Message }
+func (i Item) FilterValue() string { return i.Card.NormalizedMsg }
 
 // Title returns the primary text for the item (required by list.Item).
-func (i Item) Title() string { return i.Card.Message }
+func (i Item) Title() string { return i.Card.NormalizedMsg }
 
 // Description returns the secondary text for the item (required by list.Item).
 func (i Item) Description() string { return i.Card.JobName }
@@ -34,9 +34,9 @@ func (i Item) GetRecurrence() int {
 }
 
 func (i Item) GetPreContext() []string {
-	return SplitLines(i.Card.PreContext)
+	return i.Card.PreContext
 }
 
 func (i Item) GetPostContext() []string {
-	return SplitLines(i.Card.PostContext)
+	return i.Card.PostContext
 }

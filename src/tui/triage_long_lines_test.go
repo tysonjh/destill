@@ -14,15 +14,15 @@ func TestMainModel_LongLineWrapping(t *testing.T) {
 	// Create a card with very long log lines that should trigger wrapping
 	longLine := "bk;t=[2025-11-30T15:32:45.123Z]%0|1732983165.701|fatal|rdkafka#consumer-1|[thrd:main]:rdkafka#consumer-1:Fatalerror:Local:Brokertransportfailure:ssl://kafka-prod-03.example.com:9093/3:SSLhandshakerror"
 
-	cards := []contracts.TriageCard{
+	cards := []contracts.TriageCardV2{
 		{
 			ID:              "card-1",
 			JobName:         "backend",
-			Message:         longLine,
+			NormalizedMsg:   longLine,
 			MessageHash:     "abc123",
 			ConfidenceScore: 0.95,
-			PreContext:      longLine + "\n" + longLine,
-			PostContext:     longLine,
+			PreContext:      []string{longLine, longLine},
+			PostContext:     []string{longLine},
 		},
 	}
 

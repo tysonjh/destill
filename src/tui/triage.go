@@ -23,7 +23,7 @@ const (
 
 // cardReceivedMsg is sent when a new triage card arrives from the broker
 type cardReceivedMsg struct {
-	card contracts.TriageCard
+	card contracts.TriageCardV2
 }
 
 // pipelineCompleteMsg is sent when the pipeline signals completion
@@ -65,15 +65,15 @@ type MainModel struct {
 	cancel         context.CancelFunc    // Cancel function
 }
 
-// Start initializes and runs the TUI with the provided triage cards (legacy mode).
-func Start(cards []contracts.TriageCard) error {
+// Start initializes and runs the TUI with the provided triage cards.
+func Start(cards []contracts.TriageCardV2) error {
 	return StartWithBroker(nil, cards)
 }
 
 // StartWithBroker initializes the TUI in streaming mode with a message broker.
-// If broker is nil, uses the provided initial cards only (legacy mode).
+// If broker is nil, uses the provided initial cards only (no streaming).
 // If broker is provided, subscribes to ci_failures_ranked for live updates.
-func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) error {
+func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCardV2) error {
 	// Initialize styles
 	styles := DefaultStyles()
 
@@ -198,7 +198,7 @@ func listenForCards(cardChan <-chan broker.Message) tea.Cmd {
 			return pipelineCompleteMsg{}
 		}
 
-		var card contracts.TriageCard
+		var card contracts.TriageCardV2
 		if err := json.Unmarshal(msg.Value, &card); err != nil {
 			return pipelineErrorMsg{err: err}
 		}

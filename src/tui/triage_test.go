@@ -10,7 +10,7 @@ import (
 )
 
 // Helper to create a model for testing
-func createTestModel(cards []contracts.TriageCard) MainModel {
+func createTestModel(cards []contracts.TriageCardV2) MainModel {
 	items := make([]Item, len(cards))
 	jobSet := make(map[string]bool)
 	var jobs []string
@@ -40,11 +40,11 @@ func createTestModel(cards []contracts.TriageCard) MainModel {
 }
 
 func TestMainModel_Initialization(t *testing.T) {
-	cards := []contracts.TriageCard{
+	cards := []contracts.TriageCardV2{
 		{
 			ID:              "card-1",
 			JobName:         "tests",
-			Message:         "Test failed",
+			NormalizedMsg:   "Test failed",
 			ConfidenceScore: 0.95,
 		},
 	}
@@ -62,7 +62,7 @@ func TestMainModel_Initialization(t *testing.T) {
 }
 
 func TestMainModel_Update_Resize(t *testing.T) {
-	model := createTestModel([]contracts.TriageCard{})
+	model := createTestModel([]contracts.TriageCardV2{})
 
 	// Send resize message
 	msg := tea.WindowSizeMsg{Width: 100, Height: 40}
@@ -83,9 +83,9 @@ func TestMainModel_Update_Resize(t *testing.T) {
 }
 
 func TestMainModel_Filter(t *testing.T) {
-	cards := []contracts.TriageCard{
-		{JobName: "frontend", Message: "FE Error"},
-		{JobName: "backend", Message: "BE Error"},
+	cards := []contracts.TriageCardV2{
+		{JobName: "frontend", NormalizedMsg: "FE Error"},
+		{JobName: "backend", NormalizedMsg: "BE Error"},
 	}
 
 	model := createTestModel(cards)
@@ -123,11 +123,11 @@ func TestMainModel_Filter(t *testing.T) {
 }
 
 func TestMainModel_View(t *testing.T) {
-	cards := []contracts.TriageCard{
+	cards := []contracts.TriageCardV2{
 		{
 			ID:              "card-1",
 			JobName:         "tests",
-			Message:         "Connection timeout",
+			NormalizedMsg:   "Connection timeout",
 			MessageHash:     "abcdef1234",
 			ConfidenceScore: 0.95,
 			Metadata: map[string]string{

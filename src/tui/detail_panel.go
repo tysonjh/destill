@@ -52,7 +52,7 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	fmt.Fprintln(&content, lipgloss.NewStyle().Foreground(m.styles.ErrorForeground).Bold(true).Render("ERROR:"))
 	displayMessage := item.Card.RawMessage
 	if displayMessage == "" {
-		displayMessage = item.Card.Message // Fall back to normalized if no raw message
+		displayMessage = item.Card.NormalizedMsg // Fall back to normalized if no raw message
 	}
 	cleanMessage := CleanLogText(displayMessage)
 	wrappedError := Wrap(cleanMessage, maxWidth)
