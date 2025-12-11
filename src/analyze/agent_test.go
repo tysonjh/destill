@@ -45,7 +45,7 @@ func TestAgent_ProcessChunk(t *testing.T) {
 	agent := NewAgent(brk, log)
 
 	// Create a chunk with errors
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		RequestID:   "req-test",
 		BuildID:     "build-test",
 		JobName:     "test-job",
@@ -83,7 +83,7 @@ func TestAgent_ProcessChunk(t *testing.T) {
 	for findingsReceived < 2 { // Expecting ERROR and FATAL
 		select {
 		case findingMsg := <-findingsChan:
-			var card contracts.TriageCardV2
+			var card contracts.TriageCard
 			if err := json.Unmarshal(findingMsg.Value, &card); err != nil {
 				t.Fatalf("Failed to unmarshal finding: %v", err)
 			}
@@ -121,7 +121,7 @@ func TestAgent_EmptyChunk(t *testing.T) {
 	agent := NewAgent(brk, log)
 
 	// Create empty chunk
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		RequestID: "req-empty",
 		Content:   "",
 	}
@@ -153,7 +153,7 @@ func TestAgent_ChunkWithoutErrors(t *testing.T) {
 	agent := NewAgent(brk, log)
 
 	// Create chunk with only INFO logs
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		RequestID: "req-info",
 		Content:   "INFO: Starting process\nINFO: Processing\nINFO: Complete",
 	}
@@ -194,7 +194,7 @@ func TestAgent_IntegrationFlow(t *testing.T) {
 	agent := NewAgent(brk, log)
 
 	// Simulate multiple chunks from same build
-	chunks := []contracts.LogChunkV2{
+	chunks := []contracts.LogChunk{
 		{
 			RequestID:   "req-multi",
 			BuildID:     "build-multi",
@@ -234,7 +234,7 @@ func TestAgent_IntegrationFlow(t *testing.T) {
 	for findingsReceived < expectedFindings {
 		select {
 		case findingMsg := <-findingsChan:
-			var card contracts.TriageCardV2
+			var card contracts.TriageCard
 			if err := json.Unmarshal(findingMsg.Value, &card); err != nil {
 				t.Fatalf("Failed to unmarshal finding: %v", err)
 			}

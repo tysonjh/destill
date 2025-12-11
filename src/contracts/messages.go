@@ -1,10 +1,10 @@
 // Package contracts defines message types for the Agentic Data Plane architecture.
 package contracts
 
-// LogChunkV2 represents a chunk of log data for the agentic architecture.
+// LogChunk represents a chunk of log data for the agentic architecture.
 // Published to: destill.logs.raw
 // Key: {build_id}
-type LogChunkV2 struct {
+type LogChunk struct {
 	RequestID   string            `json:"request_id"`
 	BuildID     string            `json:"build_id"`
 	JobName     string            `json:"job_name"`
@@ -17,10 +17,10 @@ type LogChunkV2 struct {
 	Metadata    map[string]string `json:"metadata"`
 }
 
-// TriageCardV2 represents an analysis finding with chunk-aware context.
+// TriageCard represents an analysis finding with chunk-aware context.
 // Published to: destill.analysis.findings
 // Key: {request_id}
-type TriageCardV2 struct {
+type TriageCard struct {
 	// Identity
 	ID          string `json:"id"`
 	RequestID   string `json:"request_id"`

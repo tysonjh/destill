@@ -51,7 +51,7 @@ func TestAgent_PublishFlow(t *testing.T) {
 	}
 
 	// Create a chunk and publish it manually (simulating what the agent does)
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		RequestID:   "req-test",
 		BuildID:     "org-pipeline-123",
 		JobName:     "test-job",
@@ -77,7 +77,7 @@ func TestAgent_PublishFlow(t *testing.T) {
 	// Verify we can receive it
 	select {
 	case msg := <-msgChan:
-		var received contracts.LogChunkV2
+		var received contracts.LogChunk
 		if err := json.Unmarshal(msg.Value, &received); err != nil {
 			t.Fatalf("Failed to unmarshal received chunk: %v", err)
 		}
@@ -145,7 +145,7 @@ func TestAgent_ChunkingIntegration(t *testing.T) {
 	for receivedCount < len(chunks) {
 		select {
 		case msg := <-msgChan:
-			var received contracts.LogChunkV2
+			var received contracts.LogChunk
 			if err := json.Unmarshal(msg.Value, &received); err != nil {
 				t.Fatalf("Failed to unmarshal chunk: %v", err)
 			}

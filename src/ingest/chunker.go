@@ -20,9 +20,9 @@ const (
 
 // ChunkLog splits a log into ~500KB chunks with line overlap.
 // Each chunk maintains context by overlapping 50 lines with the previous chunk.
-func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadata map[string]string) []contracts.LogChunkV2 {
+func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadata map[string]string) []contracts.LogChunk {
 	if len(content) == 0 {
-		return []contracts.LogChunkV2{}
+		return []contracts.LogChunk{}
 	}
 
 	// Split into lines for processing
@@ -33,12 +33,12 @@ func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadat
 	}
 
 	if len(lines) == 0 {
-		return []contracts.LogChunkV2{}
+		return []contracts.LogChunk{}
 	}
 
 	// If content is small, return single chunk
 	if len(content) <= TargetChunkSize {
-		chunk := contracts.LogChunkV2{
+		chunk := contracts.LogChunk{
 			RequestID:   requestID,
 			BuildID:     buildID,
 			JobName:     jobName,
@@ -50,11 +50,11 @@ func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadat
 			LineEnd:     len(lines),
 			Metadata:    metadata,
 		}
-		return []contracts.LogChunkV2{chunk}
+		return []contracts.LogChunk{chunk}
 	}
 
 	// Build chunks with target size
-	var chunks []contracts.LogChunkV2
+	var chunks []contracts.LogChunk
 	currentLines := []string{}
 	currentSize := 0
 	lineStart := 1
@@ -67,7 +67,7 @@ func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadat
 		if currentSize+lineSize > TargetChunkSize && len(currentLines) > 0 {
 			// Create chunk from current lines
 			chunkContent := strings.Join(currentLines, "\n")
-			chunk := contracts.LogChunkV2{
+			chunk := contracts.LogChunk{
 				RequestID:   requestID,
 				BuildID:     buildID,
 				JobName:     jobName,
@@ -107,7 +107,7 @@ func ChunkLog(content string, requestID, buildID, jobName, jobID string, metadat
 	// Add final chunk if there are remaining lines
 	if len(currentLines) > 0 {
 		chunkContent := strings.Join(currentLines, "\n")
-		chunk := contracts.LogChunkV2{
+		chunk := contracts.LogChunk{
 			RequestID:   requestID,
 			BuildID:     buildID,
 			JobName:     jobName,
@@ -144,7 +144,7 @@ func copyMetadata(original map[string]string) map[string]string {
 }
 
 // FormatChunkInfo returns a human-readable summary of chunk information.
-func FormatChunkInfo(chunk contracts.LogChunkV2) string {
+func FormatChunkInfo(chunk contracts.LogChunk) string {
 	return fmt.Sprintf("Chunk %d/%d: lines %d-%d (%d bytes)",
 		chunk.ChunkIndex+1,
 		chunk.TotalChunks,

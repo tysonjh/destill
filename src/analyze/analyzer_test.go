@@ -132,7 +132,7 @@ func TestExtractContext(t *testing.T) {
 }
 
 func TestAnalyzeChunk_Empty(t *testing.T) {
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		Content: "",
 	}
 
@@ -143,7 +143,7 @@ func TestAnalyzeChunk_Empty(t *testing.T) {
 }
 
 func TestAnalyzeChunk_NoErrors(t *testing.T) {
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		Content: "INFO: Starting process\nINFO: Running task\nINFO: Completed successfully",
 	}
 
@@ -160,7 +160,7 @@ ERROR: Connection timeout after 30 seconds
 FATAL: Unable to start application
 INFO: Cleanup started`
 
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		RequestID:   "req-1",
 		BuildID:     "build-1",
 		JobName:     "test-job",
@@ -211,7 +211,7 @@ func TestAnalyzeChunk_LargeChunk(t *testing.T) {
 		}
 	}
 
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		Content:   strings.Join(lines, "\n"),
 		LineStart: 1,
 	}
@@ -249,7 +249,7 @@ func TestConvertToTriageCard(t *testing.T) {
 		ContextNote:     "complete",
 	}
 
-	chunk := contracts.LogChunkV2{
+	chunk := contracts.LogChunk{
 		RequestID:  "req-123",
 		BuildID:    "build-456",
 		JobName:    "test-job",

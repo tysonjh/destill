@@ -158,7 +158,7 @@ Environment variables:
 		fmt.Printf("\n✅ Found %d findings\n", len(findings))
 		fmt.Println("Launching TUI...")
 
-		// Launch TUI with TriageCardV2 directly
+		// Launch TUI with TriageCard directly
 		if err := tui.Start(findings); err != nil {
 			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
 			os.Exit(1)
@@ -236,7 +236,7 @@ Example:
 		}
 
 		// Check for cache flag
-		var initialCards []contracts.TriageCardV2
+		var initialCards []contracts.TriageCard
 		if cacheFile != "" {
 			// Try to load from cache
 			if data, err := os.ReadFile(cacheFile); err == nil {

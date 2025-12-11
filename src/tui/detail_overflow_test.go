@@ -19,7 +19,7 @@ func TestDetailPanel_PlainLongLinesOverflow(t *testing.T) {
 	longLine2 := strings.Repeat("Another extremely long line with no special characters just regular words that keep going on and on ", 4)
 	longLine3 := strings.Repeat("The quick brown fox jumps over the lazy dog again and again creating a very long line of text ", 6)
 
-	cards := []contracts.TriageCardV2{
+	cards := []contracts.TriageCard{
 		{
 			ID:              "overflow-test",
 			JobName:         "backend-service",
@@ -103,7 +103,7 @@ func TestDetailPanel_VeryLongSingleWord(t *testing.T) {
 	// Create a super long "word" (no spaces) that exceeds any reasonable width
 	longWord := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 20) // 520 characters
 
-	cards := []contracts.TriageCardV2{
+	cards := []contracts.TriageCard{
 		{
 			ID:              "long-word-test",
 			JobName:         "test-job",
@@ -158,7 +158,7 @@ func TestDetailPanel_MixedContentWithLongLines(t *testing.T) {
 		"Rolling back transaction and cleaning up resources allocated during the failed connection attempt",
 	}
 
-	cards := []contracts.TriageCardV2{
+	cards := []contracts.TriageCard{
 		{
 			ID:              "mixed-content-test",
 			JobName:         "database-init",

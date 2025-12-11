@@ -63,7 +63,7 @@ func (a *Agent) Run(ctx context.Context) error {
 // processChunk analyzes a single log chunk and publishes findings.
 func (a *Agent) processChunk(ctx context.Context, msg broker.Message) error {
 	// Parse log chunk
-	var chunk contracts.LogChunkV2
+	var chunk contracts.LogChunk
 	if err := json.Unmarshal(msg.Value, &chunk); err != nil {
 		return fmt.Errorf("failed to unmarshal chunk: %w", err)
 	}

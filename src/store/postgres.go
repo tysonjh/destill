@@ -36,7 +36,7 @@ func NewPostgresStore(dsn string) (*PostgresStore, error) {
 }
 
 // GetFindings retrieves all findings for a request.
-func (s *PostgresStore) GetFindings(ctx context.Context, requestID string) ([]contracts.TriageCardV2, error) {
+func (s *PostgresStore) GetFindings(ctx context.Context, requestID string) ([]contracts.TriageCard, error) {
 	query := `
 		SELECT 
 			id, request_id, build_url, job_name, message_hash, severity, confidence_score,
@@ -53,10 +53,10 @@ func (s *PostgresStore) GetFindings(ctx context.Context, requestID string) ([]co
 	}
 	defer rows.Close()
 
-	var findings []contracts.TriageCardV2
+	var findings []contracts.TriageCard
 
 	for rows.Next() {
-		var finding contracts.TriageCardV2
+		var finding contracts.TriageCard
 		var preContextJSON, postContextJSON, metadataJSON []byte
 		var analyzedAt time.Time
 

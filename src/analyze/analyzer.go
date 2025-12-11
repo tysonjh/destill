@@ -49,7 +49,7 @@ type Finding struct {
 
 // AnalyzeChunk processes a single log chunk and returns findings.
 // This is stateless - it only looks within the provided chunk.
-func AnalyzeChunk(chunk contracts.LogChunkV2) []Finding {
+func AnalyzeChunk(chunk contracts.LogChunk) []Finding {
 	// Split content into lines
 	lines := strings.Split(chunk.Content, "\n")
 	if len(lines) == 0 {
@@ -223,11 +223,11 @@ func CalculateMessageHash(normalized string) string {
 	return hex.EncodeToString(hash[:])
 }
 
-// ConvertToTriageCard converts a Finding to a TriageCardV2.
-func ConvertToTriageCard(finding Finding, chunk contracts.LogChunkV2, requestID string) contracts.TriageCardV2 {
+// ConvertToTriageCard converts a Finding to a TriageCard.
+func ConvertToTriageCard(finding Finding, chunk contracts.LogChunk, requestID string) contracts.TriageCard {
 	messageHash := CalculateMessageHash(finding.NormalizedMsg)
 
-	card := contracts.TriageCardV2{
+	card := contracts.TriageCard{
 		ID:              fmt.Sprintf("%s-%s-%d", chunk.JobID, messageHash[:8], finding.LineNumber),
 		RequestID:       requestID,
 		MessageHash:     messageHash,

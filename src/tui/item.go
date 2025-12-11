@@ -7,9 +7,9 @@ import (
 )
 
 // Item represents an item that can be displayed in the triage list.
-// It wraps the domain TriageCardV2 and implements bubbles/list.Item.
+// It wraps the domain TriageCard and implements bubbles/list.Item.
 type Item struct {
-	Card contracts.TriageCardV2
+	Card contracts.TriageCard
 	Rank int
 }
 
