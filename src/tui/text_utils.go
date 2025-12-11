@@ -117,7 +117,6 @@ func Wrap(text string, width int) string {
 			// If there's content on current line, break to new line first
 			if lineLength > 0 {
 				result.WriteString("\n")
-				lineLength = 0
 			}
 			// Break the long word
 			for VisualWidth(word) > width {

@@ -60,8 +60,8 @@ type LogChunkV2 struct {
 	ChunkIndex  int               `json:"chunk_index"`
 	TotalChunks int               `json:"total_chunks"`
 	Content     string            `json:"content"`
-	LineStart   int               `json:"line_start"`  // First line number in this chunk
-	LineEnd     int               `json:"line_end"`    // Last line number in this chunk
+	LineStart   int               `json:"line_start"` // First line number in this chunk
+	LineEnd     int               `json:"line_end"`   // Last line number in this chunk
 	Metadata    map[string]string `json:"metadata"`
 }
 
@@ -73,27 +73,27 @@ type TriageCardV2 struct {
 	ID          string `json:"id"`
 	RequestID   string `json:"request_id"`
 	MessageHash string `json:"message_hash"`
-	
+
 	// Source
 	Source   string `json:"source"`
 	JobName  string `json:"job_name"`
 	BuildURL string `json:"build_url"`
-	
+
 	// Content
-	Severity        string   `json:"severity"`
-	RawMessage      string   `json:"raw_message"`
-	NormalizedMsg   string   `json:"normalized_message"`
-	ConfidenceScore float64  `json:"confidence_score"`
-	
+	Severity        string  `json:"severity"`
+	RawMessage      string  `json:"raw_message"`
+	NormalizedMsg   string  `json:"normalized_message"`
+	ConfidenceScore float64 `json:"confidence_score"`
+
 	// Context (from chunk only - may be truncated)
-	PreContext  []string `json:"pre_context"`   // Up to 15 lines before
-	PostContext []string `json:"post_context"`  // Up to 30 lines after
-	ContextNote string   `json:"context_note"`  // e.g., "truncated at chunk start"
-	
+	PreContext  []string `json:"pre_context"`  // Up to 15 lines before
+	PostContext []string `json:"post_context"` // Up to 30 lines after
+	ContextNote string   `json:"context_note"` // e.g., "truncated at chunk start"
+
 	// Chunk info (for debugging/tracing)
 	ChunkIndex  int `json:"chunk_index"`
 	LineInChunk int `json:"line_in_chunk"`
-	
+
 	// Metadata
 	Metadata  map[string]string `json:"metadata"`
 	Timestamp string            `json:"timestamp"`
@@ -122,11 +122,10 @@ type RequestStatus struct {
 const (
 	// TopicLogsRaw contains raw log chunks (~500KB each)
 	TopicLogsRaw = "destill.logs.raw"
-	
+
 	// TopicAnalysisFindings contains analysis findings (triage cards)
 	TopicAnalysisFindings = "destill.analysis.findings"
-	
+
 	// TopicRequests contains build analysis requests
 	TopicRequests = "destill.requests"
 )
-

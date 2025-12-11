@@ -53,16 +53,16 @@ type MainModel struct {
 	ready          bool
 
 	// Streaming support
-	broker         broker.Broker          // Message broker
-	cardChan       <-chan broker.Message  // Channel receiving cards from broker
-	pendingCards   []Item                 // Cards waiting to be merged
-	hashMap        map[string]*Item       // For grouping by hash
-	status         LoadStatus             // Current loading status
-	cardCount      int                    // Total cards received (above threshold)
-	droppedCount   int                    // Cards dropped due to low confidence
-	jobsDiscovered map[string]bool        // Jobs we've seen so far
-	ctx            context.Context        // Context for broker operations
-	cancel         context.CancelFunc     // Cancel function
+	broker         broker.Broker         // Message broker
+	cardChan       <-chan broker.Message // Channel receiving cards from broker
+	pendingCards   []Item                // Cards waiting to be merged
+	hashMap        map[string]*Item      // For grouping by hash
+	status         LoadStatus            // Current loading status
+	cardCount      int                   // Total cards received (above threshold)
+	droppedCount   int                   // Cards dropped due to low confidence
+	jobsDiscovered map[string]bool       // Jobs we've seen so far
+	ctx            context.Context       // Context for broker operations
+	cancel         context.CancelFunc    // Cancel function
 }
 
 // Start initializes and runs the TUI with the provided triage cards (legacy mode).

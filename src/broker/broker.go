@@ -29,4 +29,3 @@ type Message struct {
 	Partition int32
 	Timestamp int64
 }
-

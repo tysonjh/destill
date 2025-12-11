@@ -23,12 +23,12 @@ clean:
 # Run tests
 test:
 	@echo "Running tests..."
-	@go test ./src/broker ./src/store ./src/pipeline ./src/ingest ./src/analyze -v
+	@go test ./src/broker ./src/store ./src/ingest ./src/analyze -v
 
 # Run tests with coverage
 test-coverage:
 	@echo "Running tests with coverage..."
-	@go test ./src/broker ./src/store ./src/pipeline ./src/ingest ./src/analyze -coverprofile=coverage.out
+	@go test ./src/broker ./src/store ./src/ingest ./src/analyze -coverprofile=coverage.out
 	@go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report generated: coverage.html"
 

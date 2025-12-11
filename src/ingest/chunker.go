@@ -152,4 +152,3 @@ func FormatChunkInfo(chunk contracts.LogChunkV2) string {
 		chunk.LineEnd,
 		len(chunk.Content))
 }
-

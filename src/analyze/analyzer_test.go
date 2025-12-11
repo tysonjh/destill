@@ -91,7 +91,7 @@ func TestExtractContext(t *testing.T) {
 		"line 2",
 		"line 3",
 		"line 4",
-		"ERROR: Something went wrong",  // line 5
+		"ERROR: Something went wrong", // line 5
 		"line 6",
 		"line 7",
 		"line 8",
@@ -122,7 +122,7 @@ func TestExtractContext(t *testing.T) {
 	}
 
 	// Test at chunk end
-	pre, post, note = extractContext(lines, len(lines)-1)
+	_, post, note = extractContext(lines, len(lines)-1)
 	if len(post) != 0 {
 		t.Errorf("Expected 0 post-context lines at end, got %d", len(post))
 	}
@@ -309,4 +309,3 @@ func TestCalculateMessageHash(t *testing.T) {
 		t.Errorf("Expected hash length 64, got %d", len(hash1))
 	}
 }
-

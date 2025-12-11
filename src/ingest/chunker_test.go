@@ -43,7 +43,7 @@ func TestChunkLog_LargeContent(t *testing.T) {
 	// Create content larger than 500KB
 	var lines []string
 	lineContent := strings.Repeat("a", 1000) // 1KB per line
-	for i := 0; i < 600; i++ { // 600KB total
+	for i := 0; i < 600; i++ {               // 600KB total
 		lines = append(lines, lineContent)
 	}
 	content := strings.Join(lines, "\n")
@@ -198,4 +198,3 @@ func TestChunkLog_LineNumbers(t *testing.T) {
 		}
 	}
 }
-

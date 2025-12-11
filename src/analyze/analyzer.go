@@ -21,16 +21,16 @@ const (
 
 var (
 	// Severity detection patterns
-	fatalPattern     = regexp.MustCompile(`(?i)\b(FATAL|PANIC|CRITICAL)\b`)
-	errorPattern     = regexp.MustCompile(`(?i)\b(ERROR|ERR|EXCEPTION|FAILURE|FAILED)\b`)
-	warningPattern   = regexp.MustCompile(`(?i)\b(WARN|WARNING)\b`)
-	
+	fatalPattern   = regexp.MustCompile(`(?i)\b(FATAL|PANIC|CRITICAL)\b`)
+	errorPattern   = regexp.MustCompile(`(?i)\b(ERROR|ERR|EXCEPTION|FAILURE|FAILED)\b`)
+	warningPattern = regexp.MustCompile(`(?i)\b(WARN|WARNING)\b`)
+
 	// Normalization patterns (similar to existing analyzer)
 	timestampPattern = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
 	uuidPattern      = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	hexPattern       = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
 	numberPattern    = regexp.MustCompile(`\b\d+\b`)
-	
+
 	// High confidence indicators
 	highConfidencePattern = regexp.MustCompile(`(?i)^.{0,50}\b(FATAL|ERROR|EXCEPTION|CRITICAL)\s*[\[:]`)
 )
@@ -68,7 +68,7 @@ func AnalyzeChunk(chunk contracts.LogChunkV2) []Finding {
 
 		// Detect severity
 		severity := detectSeverity(trimmed)
-		
+
 		// Only process ERROR and FATAL
 		if severity != "ERROR" && severity != "FATAL" {
 			continue
@@ -76,7 +76,7 @@ func AnalyzeChunk(chunk contracts.LogChunkV2) []Finding {
 
 		// Calculate confidence
 		confidence := calculateConfidence(trimmed, severity)
-		
+
 		// Skip low confidence findings
 		if confidence < 0.5 {
 			continue
@@ -190,7 +190,7 @@ func extractContext(lines []string, lineIndex int) ([]string, []string, string) 
 		note = "truncated at chunk start"
 		preStart = 0
 	}
-	
+
 	for i := preStart; i < lineIndex; i++ {
 		if i >= 0 && i < len(lines) {
 			preContext = append(preContext, lines[i])
@@ -261,4 +261,3 @@ func copyMetadata(original map[string]string) map[string]string {
 	}
 	return copy
 }
-

@@ -106,4 +106,3 @@ func (a *Agent) processChunk(ctx context.Context, msg broker.Message) error {
 
 	return nil
 }
-

@@ -50,13 +50,3 @@ func LoadFromEnv() (*Config, error) {
 
 	return cfg, nil
 }
-
-// MustLoadFromEnv loads configuration from environment variables and panics on error.
-// This is useful for initialization in main() where configuration errors should be fatal.
-func MustLoadFromEnv() *Config {
-	cfg, err := LoadFromEnv()
-	if err != nil {
-		panic(fmt.Sprintf("failed to load configuration: %v", err))
-	}
-	return cfg
-}

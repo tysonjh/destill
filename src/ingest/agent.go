@@ -151,4 +151,3 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 
 	return nil
 }
-

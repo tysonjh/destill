@@ -149,7 +149,7 @@ Environment variables:
 		cards := convertToTriageCards(findings)
 
 		fmt.Printf("\n✅ Found %d findings\n", len(cards))
-		fmt.Println("Launching TUI...\n")
+		fmt.Println("Launching TUI...")
 
 		// Launch TUI
 		if err := tui.Start(cards); err != nil {
@@ -191,8 +191,9 @@ func getRecurrenceCount(card contracts.TriageCard) int {
 	}
 	if count, ok := card.Metadata["recurrence_count"]; ok {
 		var c int
-		fmt.Sscanf(count, "%d", &c)
-		return c
+		if _, err := fmt.Sscanf(count, "%d", &c); err == nil {
+			return c
+		}
 	}
 	return 1
 }

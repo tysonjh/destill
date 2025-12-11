@@ -14,7 +14,7 @@ import (
 func TestAgent_ProcessRequest(t *testing.T) {
 	// This is a unit test for the agent's processRequest method
 	// Since we can't easily mock the Buildkite client, we'll test the chunker integration
-	
+
 	// Create in-memory broker
 	brk := broker.NewInMemoryBroker()
 	defer brk.Close()
@@ -181,4 +181,3 @@ func TestAgent_TopicNames(t *testing.T) {
 		t.Errorf("Expected TopicRequests to be 'destill.requests', got %s", contracts.TopicRequests)
 	}
 }
-

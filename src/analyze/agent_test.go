@@ -255,4 +255,3 @@ func TestAgent_IntegrationFlow(t *testing.T) {
 	t.Logf("Successfully processed %d chunks and received %d findings",
 		len(chunks), findingsReceived)
 }
-

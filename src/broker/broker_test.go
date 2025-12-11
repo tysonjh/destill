@@ -98,4 +98,3 @@ func TestInMemoryBroker_ClosedBroker(t *testing.T) {
 		t.Error("Expected error when subscribing to closed broker")
 	}
 }
-

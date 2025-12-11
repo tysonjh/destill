@@ -215,7 +215,9 @@ func TestMultipleSubscribersSameTopic(t *testing.T) {
 
 	// Publish message
 	testMsg := []byte("broadcast message")
-	broker.Publish(ctx, "shared-topic", "key", testMsg)
+	if err := broker.Publish(ctx, "shared-topic", "key", testMsg); err != nil {
+		t.Fatalf("Failed to publish: %v", err)
+	}
 
 	// All subscribers should receive the message
 	for i, ch := range []<-chan Message{ch1, ch2, ch3} {

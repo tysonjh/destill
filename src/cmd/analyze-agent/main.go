@@ -69,4 +69,3 @@ func main() {
 
 	log.Info("Analyze agent stopped")
 }
-

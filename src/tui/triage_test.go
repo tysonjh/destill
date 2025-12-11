@@ -101,14 +101,12 @@ func TestMainModel_Filter(t *testing.T) {
 	m := updatedModel.(MainModel)
 
 	// Header should update
-	if m.header.GetFilter() != "frontend" {
-		// Note: Order depends on map iteration in createTestModel, which is random.
-		// But typically it cycles through available jobs.
-		// Since map iteration is random, we can't guarantee "frontend" comes first unless we sort.
-		// In `Start` implementation:
-		// for i, card := range cards { ... if !jobSet ... append }
-		// Iteration over slice `cards` is deterministic. So "frontend" (index 0) comes first.
-	}
+	// Note: Order depends on map iteration in createTestModel, which is random.
+	// But typically it cycles through available jobs.
+	// Since map iteration is random, we can't guarantee "frontend" comes first unless we sort.
+	// In `Start` implementation:
+	// for i, card := range cards { ... if !jobSet ... append }
+	// Iteration over slice `cards` is deterministic. So "frontend" (index 0) comes first.
 
 	if m.header.GetFilter() == "ALL" {
 		t.Error("expected filter to change from ALL")

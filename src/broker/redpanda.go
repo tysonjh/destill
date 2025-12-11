@@ -11,11 +11,11 @@ import (
 
 // RedpandaBroker is a Kafka-compatible broker implementation using franz-go.
 type RedpandaBroker struct {
-	client      *kgo.Client
-	brokers     []string
-	mu          sync.RWMutex
-	consumers   map[string]*kgo.Client // topic+groupID -> consumer client
-	closed      bool
+	client    *kgo.Client
+	brokers   []string
+	mu        sync.RWMutex
+	consumers map[string]*kgo.Client // topic+groupID -> consumer client
+	closed    bool
 }
 
 // NewRedpandaBroker creates a new RedpandaBroker instance.
@@ -79,7 +79,7 @@ func (b *RedpandaBroker) Subscribe(ctx context.Context, topic string, groupID st
 	}
 
 	consumerKey := fmt.Sprintf("%s:%s", topic, groupID)
-	
+
 	// Check if consumer already exists
 	if _, exists := b.consumers[consumerKey]; exists {
 		return nil, fmt.Errorf("consumer already exists for topic %s and group %s", topic, groupID)
@@ -173,4 +173,3 @@ func (b *RedpandaBroker) Close() error {
 
 	return nil
 }
-
