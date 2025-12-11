@@ -200,9 +200,9 @@ Example:
 			os.Exit(1)
 		}
 
-		// Publish to destill_requests topic
+		// Publish to destill.requests topic
 		ctx := context.Background()
-		if err := msgBroker.Publish(ctx, "destill_requests", request.RequestID, data); err != nil {
+		if err := msgBroker.Publish(ctx, contracts.TopicRequests, request.RequestID, data); err != nil {
 			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
 			os.Exit(1)
 		}
@@ -330,9 +330,9 @@ Environment variables:
 			os.Exit(1)
 		}
 
-		// Publish to destill_requests topic
+		// Publish to destill.requests topic
 		ctx := context.Background()
-		if err := msgBroker.Publish(ctx, "destill_requests", request.RequestID, data); err != nil {
+		if err := msgBroker.Publish(ctx, contracts.TopicRequests, request.RequestID, data); err != nil {
 			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
 			os.Exit(1)
 		}
