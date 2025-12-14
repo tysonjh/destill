@@ -41,6 +41,16 @@ type Job struct {
 	RawLogURL  string `json:"raw_log_url"`
 }
 
+// Artifact represents a build artifact.
+type Artifact struct {
+	ID          string `json:"id"`
+	JobID       string `json:"job_id"`
+	Path        string `json:"path"` // e.g., "junit.xml" or "test-results/junit.xml"
+	DownloadURL string `json:"download_url"`
+	FileSize    int64  `json:"file_size"`
+	Sha1Sum     string `json:"sha1sum"`
+}
+
 // NewClient creates a new Buildkite API client.
 func NewClient(apiToken string) *Client {
 	return &Client{
@@ -135,4 +145,69 @@ func (c *Client) GetJobLog(org, pipeline string, buildNumber int, jobID string) 
 	}
 
 	return string(logBytes), nil
+}
+
+// GetJobArtifacts fetches the list of artifacts for a specific job.
+func (c *Client) GetJobArtifacts(org, pipeline string, buildNumber int, jobID string) ([]Artifact, error) {
+	url := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%d/jobs/%s/artifacts",
+		APIBaseURL, org, pipeline, buildNumber, jobID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiToken))
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 404 is OK - job might not have artifacts
+	if resp.StatusCode == http.StatusNotFound {
+		return []Artifact{}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var artifacts []Artifact
+	if err := json.NewDecoder(resp.Body).Decode(&artifacts); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return artifacts, nil
+}
+
+// DownloadArtifact downloads the content of an artifact by its download URL.
+func (c *Client) DownloadArtifact(downloadURL string) ([]byte, error) {
+	req, err := http.NewRequest("GET", downloadURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiToken))
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read artifact content: %w", err)
+	}
+
+	return data, nil
 }
