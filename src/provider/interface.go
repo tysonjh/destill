@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 )
 
@@ -67,8 +68,38 @@ func ParseURL(url string) (*BuildRef, error) {
 	return nil, fmt.Errorf("%w: %s", ErrInvalidURL, url)
 }
 
+// ProviderFactory is a function that creates a provider instance
+type ProviderFactory func(token string) Provider
+
+var providers = make(map[string]ProviderFactory)
+
+// RegisterProvider registers a provider factory for a given provider name
+func RegisterProvider(name string, factory ProviderFactory) {
+	providers[name] = factory
+}
+
 // GetProvider returns the appropriate provider implementation for a build ref
 func GetProvider(ref *BuildRef) (Provider, error) {
-	// Will be implemented in next tasks when we create providers
-	return nil, fmt.Errorf("%w: %s", ErrProviderUnknown, ref.Provider)
+	factory, ok := providers[ref.Provider]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrProviderUnknown, ref.Provider)
+	}
+
+	var token string
+	switch ref.Provider {
+	case "buildkite":
+		token = os.Getenv("BUILDKITE_API_TOKEN")
+		if token == "" {
+			return nil, errors.New("BUILDKITE_API_TOKEN environment variable not set")
+		}
+	case "github":
+		token = os.Getenv("GITHUB_TOKEN")
+		if token == "" {
+			return nil, errors.New("GITHUB_TOKEN environment variable not set")
+		}
+	default:
+		return nil, fmt.Errorf("%w: %s", ErrProviderUnknown, ref.Provider)
+	}
+
+	return factory(token), nil
 }

@@ -2,6 +2,7 @@
 package buildkite
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,21 +25,24 @@ type Client struct {
 
 // Build represents a Buildkite build.
 type Build struct {
-	ID     string `json:"id"`
-	Number int    `json:"number"`
-	State  string `json:"state"`
-	Jobs   []Job  `json:"jobs"`
+	ID        string    `json:"id"`
+	Number    string    `json:"number"`
+	State     string    `json:"state"`
+	WebURL    string    `json:"web_url"`
+	CreatedAt time.Time `json:"created_at"`
+	Jobs      []Job     `json:"jobs"`
 }
 
 // Job represents a Buildkite job within a build.
 type Job struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	State      string `json:"state"`
-	ExitStatus *int   `json:"exit_status"`
-	LogURL     string `json:"log_url"`
-	RawLogURL  string `json:"raw_log_url"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Type       string    `json:"type"`
+	State      string    `json:"state"`
+	ExitStatus int       `json:"exit_status"`
+	CreatedAt  time.Time `json:"created_at"`
+	LogURL     string    `json:"log_url"`
+	RawLogURL  string    `json:"raw_log_url"`
 }
 
 // Artifact represents a build artifact.
@@ -84,10 +88,10 @@ func ParseBuildURL(buildURL string) (org, pipeline string, buildNumber int, err 
 }
 
 // GetBuild fetches a build's metadata from the Buildkite API.
-func (c *Client) GetBuild(org, pipeline string, buildNumber int) (*Build, error) {
-	url := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%d", APIBaseURL, org, pipeline, buildNumber)
+func (c *Client) GetBuild(ctx context.Context, org, pipeline, buildNumber string) (*Build, error) {
+	url := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%s", APIBaseURL, org, pipeline, buildNumber)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -115,12 +119,11 @@ func (c *Client) GetBuild(org, pipeline string, buildNumber int) (*Build, error)
 }
 
 // GetJobLog fetches the raw log content for a specific job.
-func (c *Client) GetJobLog(org, pipeline string, buildNumber int, jobID string) (string, error) {
-	// Use the jobs endpoint to get the log URL
-	url := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%d/jobs/%s/log",
-		APIBaseURL, org, pipeline, buildNumber, jobID)
+func (c *Client) GetJobLog(ctx context.Context, jobID string) (string, error) {
+	// The job ID from the API response can be used directly
+	url := fmt.Sprintf("%s/jobs/%s/log", APIBaseURL, jobID)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
@@ -148,11 +151,11 @@ func (c *Client) GetJobLog(org, pipeline string, buildNumber int, jobID string) 
 }
 
 // GetJobArtifacts fetches the list of artifacts for a specific job.
-func (c *Client) GetJobArtifacts(org, pipeline string, buildNumber int, jobID string) ([]Artifact, error) {
-	url := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds/%d/jobs/%s/artifacts",
-		APIBaseURL, org, pipeline, buildNumber, jobID)
+func (c *Client) GetJobArtifacts(ctx context.Context, jobID string) ([]Artifact, error) {
+	// The job ID from the API response can be used directly
+	url := fmt.Sprintf("%s/jobs/%s/artifacts", APIBaseURL, jobID)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -185,8 +188,8 @@ func (c *Client) GetJobArtifacts(org, pipeline string, buildNumber int, jobID st
 }
 
 // DownloadArtifact downloads the content of an artifact by its download URL.
-func (c *Client) DownloadArtifact(downloadURL string) ([]byte, error) {
-	req, err := http.NewRequest("GET", downloadURL, nil)
+func (c *Client) DownloadArtifact(ctx context.Context, downloadURL string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
