@@ -8,3 +8,6 @@
 destill
 
 bin/
+
+# Worktree directories
+.worktrees/
