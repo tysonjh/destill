@@ -16,6 +16,13 @@ import (
 	"destill-agent/src/tui"
 )
 
+const (
+	// RequestIDFormat documents the format of generated request IDs
+	// Format: req-YYYYMMDDTHHmmss-XXXXXXXX (ISO timestamp + 8 hex random chars)
+	// Example: req-20240115T143022-a3f8c91d
+	RequestIDFormat = "req-YYYYMMDDTHHmmss-XXXXXXXX"
+)
+
 // localModeContext holds resources for local mode execution
 type localModeContext struct {
 	broker broker.Broker
@@ -68,7 +75,11 @@ func generateRequestID() string {
 
 	// Random suffix (4 bytes = 8 hex chars = 32 bits of randomness)
 	randomBytes := make([]byte, 4)
-	rand.Read(randomBytes)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to timestamp-only ID if random generation fails
+		// This should be extremely rare (only on broken systems)
+		return fmt.Sprintf("req-%s-00000000", timestamp)
+	}
 	randomSuffix := hex.EncodeToString(randomBytes)
 
 	return fmt.Sprintf("req-%s-%s", timestamp, randomSuffix)
@@ -182,4 +193,3 @@ func launchTUI(msgBroker broker.Broker, initialCards []contracts.TriageCard) err
 
 	return tui.StartWithBroker(brokerForTUI, initialCards)
 }
-

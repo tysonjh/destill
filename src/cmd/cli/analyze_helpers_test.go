@@ -343,4 +343,3 @@ func BenchmarkSortCardsByPriority(b *testing.B) {
 		sortCardsByPriority(testCards)
 	}
 }
-
