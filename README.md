@@ -1,21 +1,45 @@
-# Destill
+# Destill - CI/CD Build Failure Analyzer
 
-A distributed log triage tool for CI/CD pipelines that helps developers quickly identify and prioritize build failures using an agentic architecture.
+Destill helps engineers quickly find the root cause of build failures by analyzing logs with pattern-based detection and JUnit parsing.
+
+## Features
+
+- 🔍 **Multi-Platform Support**: Buildkite and GitHub Actions
+- ⚡ **Fast Local Analysis**: No infrastructure required
+- 🎯 **Smart Confidence Scoring**: JUnit parsing (1.0) + pattern-based detection (0.0-1.0)
+- 🤖 **Claude Integration**: MCP server for AI-assisted debugging
+- 📊 **Interactive TUI**: Real-time findings sorted by confidence
+- 🔧 **Self-Hosted Option**: Optional distributed mode with Redpanda + Postgres
 
 ## 🚀 Quick Start
 
-The quickest start:
+### Installation
 
 ```bash
-# 1. Build binaries
+# Build from source
 make build
 
-# 2. Set your Buildkite API token
-export BUILDKITE_API_TOKEN="your-token"
+# Or install binaries to /usr/local/bin
+make install
+```
 
-# 3. Analyze a build in local in-memory mode
+### Analyze a Build
+
+**Buildkite:**
+```bash
+export BUILDKITE_API_TOKEN="your-token"
 ./bin/destill analyze "https://buildkite.com/org/pipeline/builds/123"
 ```
+
+**GitHub Actions:**
+```bash
+export GITHUB_TOKEN="your-token"
+./bin/destill analyze "https://github.com/owner/repo/actions/runs/456"
+```
+
+### Claude Integration
+
+See [MCP Integration Guide](docs/MCP_INTEGRATION.md) for setting up Destill with Claude Desktop or Claude Code.
 
 For the full distributed system with agents, Redpanda, and Postgres, see **[QUICK_START_AGENTIC.md](./QUICK_START_AGENTIC.md)** for a 5-minute setup guide.
 
@@ -53,7 +77,7 @@ docker exec -it destill-postgres psql -U destill -d destill \
 
 Destill is an **agentic log analysis system** that automatically:
 
-1. **Ingests** build logs and JUnit XML artifacts from Buildkite
+1. **Ingests** build logs and JUnit XML artifacts from Buildkite and GitHub Actions
 2. **Analyzes** logs to detect errors and failures (stateless processing)
 3. **Parses** JUnit XML for definitive test failures (1.0 confidence)
 4. **Persists** findings to Postgres (via Redpanda Connect)
@@ -174,6 +198,8 @@ Destill supports standard JUnit XML formats:
 ### Getting Started
 - **[QUICK_START_AGENTIC.md](./QUICK_START_AGENTIC.md)** - 5-minute setup guide
 - **[TESTING_AGENTIC_MODE.md](./TESTING_AGENTIC_MODE.md)** - Comprehensive testing walkthrough
+- **[docs/GITHUB_ACTIONS.md](./docs/GITHUB_ACTIONS.md)** - GitHub Actions setup
+- **[docs/MCP_INTEGRATION.md](./docs/MCP_INTEGRATION.md)** - Claude integration guide
 
 ### Technical Details
 - **[ARCHITECTURE.md](./ARCHITECTURE.md)** - System design and data flow
@@ -189,7 +215,7 @@ Destill supports standard JUnit XML formats:
 
 - Go 1.24.10 or later
 - Docker Desktop (for infrastructure)
-- Buildkite API token
+- Buildkite API token or GitHub token
 
 ### Build
 
@@ -226,17 +252,21 @@ Destill supports two modes:
 
 **Requirements**: Just the binary (no Docker)
 
+**Buildkite:**
 ```bash
-# Set environment
 export BUILDKITE_API_TOKEN="your-token"
-
-# Analyze with streaming TUI (all-in-one)
 ./bin/destill analyze "https://buildkite.com/org/pipeline/builds/123"
-
-# Options:
-# --json         Output findings as JSON instead of TUI (not yet implemented)
-# --cache FILE   Load cached triage cards for fast iteration
 ```
+
+**GitHub Actions:**
+```bash
+export GITHUB_TOKEN="your-token"
+./bin/destill analyze "https://github.com/owner/repo/actions/runs/456"
+```
+
+**Options:**
+- `--json` - Output findings as JSON instead of TUI (not yet implemented)
+- `--cache FILE` - Load cached triage cards for fast iteration
 
 **How it works**:
 - Launches in-memory broker
@@ -356,7 +386,8 @@ Test coverage by package:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `BUILDKITE_API_TOKEN` | Yes (all modes) | Buildkite API access token |
+| `BUILDKITE_API_TOKEN` | For Buildkite | Buildkite API access token |
+| `GITHUB_TOKEN` | For GitHub Actions | GitHub Personal Access Token with `repo` scope |
 | `REDPANDA_BROKERS` | Distributed only | Comma-separated broker addresses (e.g., `localhost:19092`) |
 | `POSTGRES_DSN` | Distributed only | Postgres connection string |
 
