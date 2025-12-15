@@ -2,6 +2,8 @@ package buildkite
 
 import (
 	"context"
+	"fmt"
+
 	"destill-agent/src/provider"
 )
 
@@ -14,13 +16,15 @@ func init() {
 
 // Provider implements provider.Provider for Buildkite
 type Provider struct {
-	client *Client
+	client     *Client
+	jobLogURLs map[string]string // Maps job ID -> raw log URL
 }
 
 // NewProvider creates a Buildkite provider with API token
 func NewProvider(token string) *Provider {
 	return &Provider{
-		client: NewClient(token),
+		client:     NewClient(token),
+		jobLogURLs: make(map[string]string),
 	}
 }
 
@@ -47,7 +51,7 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 
 	build := &provider.Build{
 		ID:        bkBuild.ID,
-		Number:    bkBuild.Number,
+		Number:    fmt.Sprintf("%d", bkBuild.Number),
 		URL:       bkBuild.WebURL,
 		State:     bkBuild.State,
 		Timestamp: bkBuild.CreatedAt,
@@ -55,6 +59,9 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 	}
 
 	for _, bkJob := range bkBuild.Jobs {
+		// Cache the raw log URL for later retrieval
+		p.jobLogURLs[bkJob.ID] = bkJob.RawLogURL
+
 		build.Jobs = append(build.Jobs, provider.Job{
 			ID:        bkJob.ID,
 			Name:      bkJob.Name,
@@ -71,7 +78,14 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 
 // FetchJobLog retrieves raw log content
 func (p *Provider) FetchJobLog(ctx context.Context, jobID string) (string, error) {
-	return p.client.GetJobLog(ctx, jobID)
+	// Look up the raw log URL from our cache (populated by FetchBuild)
+	rawLogURL, ok := p.jobLogURLs[jobID]
+	if !ok {
+		return "", fmt.Errorf("no log URL found for job %s (FetchBuild must be called first)", jobID)
+	}
+
+	// Fetch the log using the raw log URL
+	return p.client.GetJobLogByURL(ctx, rawLogURL)
 }
 
 // FetchArtifacts retrieves artifacts for a job

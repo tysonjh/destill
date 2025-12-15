@@ -26,7 +26,7 @@ type Client struct {
 // Build represents a Buildkite build.
 type Build struct {
 	ID        string    `json:"id"`
-	Number    string    `json:"number"`
+	Number    int       `json:"number"`
 	State     string    `json:"state"`
 	WebURL    string    `json:"web_url"`
 	CreatedAt time.Time `json:"created_at"`
@@ -119,11 +119,42 @@ func (c *Client) GetBuild(ctx context.Context, org, pipeline, buildNumber string
 }
 
 // GetJobLog fetches the raw log content for a specific job.
+// Deprecated: Use GetJobLogByURL instead with the raw_log_url from the job metadata.
 func (c *Client) GetJobLog(ctx context.Context, jobID string) (string, error) {
 	// The job ID from the API response can be used directly
 	url := fmt.Sprintf("%s/jobs/%s/log", APIBaseURL, jobID)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiToken))
+	req.Header.Set("Accept", "text/plain")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	logBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read log content: %w", err)
+	}
+
+	return string(logBytes), nil
+}
+
+// GetJobLogByURL fetches the raw log content using the provided raw_log_url.
+// This is the preferred method as it uses the URL provided by the Buildkite API.
+func (c *Client) GetJobLogByURL(ctx context.Context, rawLogURL string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", rawLogURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
