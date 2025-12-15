@@ -67,6 +67,9 @@ type MainModel struct {
 
 	// Progress tracking
 	progress ProgressModel // Progress model for showing loading state
+
+	// Auto-switch tracking
+	autoSwitchedToFailedJob bool // Track if we've auto-switched to first failed job
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -84,7 +87,7 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 	// Build initial state from provided cards
 	hashMap := make(map[string]*Item)
 	jobsDiscovered := make(map[string]bool)
-	var jobs []string
+	jobsFailed := make(map[string]bool)
 
 	for _, card := range initialCards {
 		if existing, ok := hashMap[card.MessageHash]; ok {
@@ -97,9 +100,25 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 		}
 		if !jobsDiscovered[card.JobName] {
 			jobsDiscovered[card.JobName] = true
-			jobs = append(jobs, card.JobName)
+		}
+		// Track if this job failed (exit_status != "0")
+		if exitStatus, ok := card.Metadata["exit_status"]; ok && exitStatus != "0" {
+			jobsFailed[card.JobName] = true
 		}
 	}
+
+	// Build JobInfo list sorted with failed jobs first
+	var jobs []JobInfo
+	var failedJobs []JobInfo
+	var passedJobs []JobInfo
+	for jobName := range jobsDiscovered {
+		if jobsFailed[jobName] {
+			failedJobs = append(failedJobs, JobInfo{Name: jobName, Failed: true})
+		} else {
+			passedJobs = append(passedJobs, JobInfo{Name: jobName, Failed: false})
+		}
+	}
+	jobs = append(failedJobs, passedJobs...)
 
 	// Convert map to sorted slice
 	items := hashMapToSortedItems(hashMap)
@@ -114,9 +133,30 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 	header := NewHeaderWithStyles("Destill Analysis", jobs, styles)
 	header.SetLoadStatus(status, len(items), len(jobsDiscovered))
 
+	// Default to first failed job if any exist
+	if len(failedJobs) > 0 {
+		header.currentFilterIndex = 1 // Index 0 is "ALL", index 1 is first job
+		header.rawFilterName = failedJobs[0].Name
+		header.selectedFilter = header.formatFilterDisplay(failedJobs[0].Name, true)
+	}
+
 	// Initialize list view
 	listView := NewView()
-	listView.SetItems(items)
+
+	// Apply initial filter if defaulting to a failed job
+	var initialItems []Item
+	if len(failedJobs) > 0 {
+		// Filter to show only the first failed job's items
+		for _, item := range items {
+			if item.Card.JobName == failedJobs[0].Name {
+				initialItems = append(initialItems, item)
+			}
+		}
+	} else {
+		initialItems = items
+	}
+
+	listView.SetItems(initialItems)
 
 	// Subscribe to broker if provided
 	var cardChan <-chan broker.Message
@@ -275,7 +315,20 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Track new jobs
 		if !m.jobsDiscovered[msg.card.JobName] {
 			m.jobsDiscovered[msg.card.JobName] = true
-			m.header.AddJob(msg.card.JobName)
+		}
+		// Update job status in header (handles both new jobs and updating failed status)
+		failed := false
+		if exitStatus, ok := msg.card.Metadata["exit_status"]; ok && exitStatus != "0" {
+			failed = true
+		}
+		m.header.AddJob(msg.card.JobName, failed)
+
+		// Auto-switch to first failed job when discovered
+		if failed && !m.autoSwitchedToFailedJob && m.header.GetFilter() == "ALL" {
+			m.autoSwitchedToFailedJob = true
+			// Switch to this failed job
+			m.header.CycleFilter() // This will cycle from ALL (index 0) to first job (index 1)
+			m.applyFilter()
 		}
 
 		// Add card to pending

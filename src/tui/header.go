@@ -6,12 +6,18 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// JobInfo contains information about a job including its failure status.
+type JobInfo struct {
+	Name   string
+	Failed bool
+}
+
 // Header represents the top status bar component.
 type Header struct {
 	projectStatus      string
 	selectedFilter     string // Formatted display string
 	rawFilterName      string // Raw filter name for comparison
-	availableJobs      []string
+	availableJobs      []JobInfo
 	currentFilterIndex int
 	searchQuery        string
 	searchMode         bool
@@ -26,7 +32,7 @@ type Header struct {
 }
 
 // NewHeaderWithStyles creates a new header with custom styles
-func NewHeaderWithStyles(projectStatus string, availableJobs []string, styles *StyleConfig) Header {
+func NewHeaderWithStyles(projectStatus string, availableJobs []JobInfo, styles *StyleConfig) Header {
 	h := Header{
 		projectStatus:      projectStatus,
 		availableJobs:      availableJobs,
@@ -34,7 +40,7 @@ func NewHeaderWithStyles(projectStatus string, availableJobs []string, styles *S
 		rawFilterName:      "ALL",
 		styles:             styles,
 	}
-	h.selectedFilter = h.formatFilterDisplay("ALL")
+	h.selectedFilter = h.formatFilterDisplay("ALL", false)
 	return h
 }
 
@@ -43,32 +49,50 @@ func (h Header) GetFilter() string {
 	return h.rawFilterName
 }
 
-// formatFilterDisplay formats the filter display string with index
-func (h Header) formatFilterDisplay(filterName string) string {
-	return fmt.Sprintf("%s [%d/%d]", filterName, h.currentFilterIndex, len(h.availableJobs))
+// formatFilterDisplay formats the filter display string with index and optional red color for failed jobs
+func (h Header) formatFilterDisplay(filterName string, failed bool) string {
+	displayName := filterName
+	if failed {
+		// Apply red color to failed job name
+		redStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
+		displayName = redStyle.Render(filterName)
+	}
+	return fmt.Sprintf("%s [%d/%d]", displayName, h.currentFilterIndex, len(h.availableJobs))
 }
 
 // CycleFilter cycles to the next filter
 func (h *Header) CycleFilter() {
-	filters := append([]string{"ALL"}, h.availableJobs...)
-	h.currentFilterIndex = (h.currentFilterIndex + 1) % len(filters)
-	h.rawFilterName = filters[h.currentFilterIndex]
-	h.selectedFilter = h.formatFilterDisplay(h.rawFilterName)
+	totalFilters := 1 + len(h.availableJobs) // ALL + jobs
+	h.currentFilterIndex = (h.currentFilterIndex + 1) % totalFilters
+	if h.currentFilterIndex == 0 {
+		h.rawFilterName = "ALL"
+		h.selectedFilter = h.formatFilterDisplay("ALL", false)
+	} else {
+		jobInfo := h.availableJobs[h.currentFilterIndex-1]
+		h.rawFilterName = jobInfo.Name
+		h.selectedFilter = h.formatFilterDisplay(jobInfo.Name, jobInfo.Failed)
+	}
 }
 
 // CycleFilterBackward cycles to the previous filter
 func (h *Header) CycleFilterBackward() {
-	filters := append([]string{"ALL"}, h.availableJobs...)
-	h.currentFilterIndex = (h.currentFilterIndex - 1 + len(filters)) % len(filters)
-	h.rawFilterName = filters[h.currentFilterIndex]
-	h.selectedFilter = h.formatFilterDisplay(h.rawFilterName)
+	totalFilters := 1 + len(h.availableJobs) // ALL + jobs
+	h.currentFilterIndex = (h.currentFilterIndex - 1 + totalFilters) % totalFilters
+	if h.currentFilterIndex == 0 {
+		h.rawFilterName = "ALL"
+		h.selectedFilter = h.formatFilterDisplay("ALL", false)
+	} else {
+		jobInfo := h.availableJobs[h.currentFilterIndex-1]
+		h.rawFilterName = jobInfo.Name
+		h.selectedFilter = h.formatFilterDisplay(jobInfo.Name, jobInfo.Failed)
+	}
 }
 
 // ResetFilter resets the filter to ALL
 func (h *Header) ResetFilter() {
 	h.currentFilterIndex = 0
 	h.rawFilterName = "ALL"
-	h.selectedFilter = h.formatFilterDisplay("ALL")
+	h.selectedFilter = h.formatFilterDisplay("ALL", false)
 }
 
 // SetSearch updates the search state
@@ -95,16 +119,43 @@ func (h *Header) SetLowConfidenceCount(count int) {
 }
 
 // AddJob adds a new job to the available jobs list
-func (h *Header) AddJob(jobName string) {
-	// Check if already exists
-	for _, j := range h.availableJobs {
-		if j == jobName {
+func (h *Header) AddJob(jobName string, failed bool) {
+	// Check if already exists - if so, update failed status
+	for i, j := range h.availableJobs {
+		if j.Name == jobName {
+			// Update failed status if this job failed
+			if failed && !h.availableJobs[i].Failed {
+				h.availableJobs[i].Failed = true
+			}
 			return
 		}
 	}
-	h.availableJobs = append(h.availableJobs, jobName)
+
+	// Insert new job - failed jobs go first
+	newJob := JobInfo{Name: jobName, Failed: failed}
+	if failed {
+		// Insert failed job at the beginning (before non-failed jobs)
+		insertIndex := 0
+		for i, j := range h.availableJobs {
+			if !j.Failed {
+				insertIndex = i
+				break
+			}
+			insertIndex = i + 1
+		}
+		h.availableJobs = append(h.availableJobs[:insertIndex], append([]JobInfo{newJob}, h.availableJobs[insertIndex:]...)...)
+	} else {
+		// Non-failed jobs go at the end
+		h.availableJobs = append(h.availableJobs, newJob)
+	}
+
 	// Update filter display to reflect new job count
-	h.selectedFilter = h.formatFilterDisplay(h.rawFilterName)
+	if h.currentFilterIndex == 0 {
+		h.selectedFilter = h.formatFilterDisplay("ALL", false)
+	} else if h.currentFilterIndex-1 < len(h.availableJobs) {
+		jobInfo := h.availableJobs[h.currentFilterIndex-1]
+		h.selectedFilter = h.formatFilterDisplay(jobInfo.Name, jobInfo.Failed)
+	}
 }
 
 // Render renders the header
