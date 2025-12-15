@@ -27,7 +27,7 @@ The MCP server is a standalone binary that communicates with Claude via stdio:
 
 ```bash
 # Build the MCP server binary
-go build -o ~/.local/bin/destill-mcp cmd/destill-mcp/main.go
+go build -o ~/.local/bin/destill-mcp src/cmd/mcp-server/main.go
 
 # Verify it was built
 ls -la ~/.local/bin/destill-mcp
