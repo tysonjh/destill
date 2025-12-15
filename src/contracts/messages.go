@@ -75,9 +75,9 @@ type RequestStatus struct {
 // Key: {request_id}
 type ProgressUpdate struct {
 	RequestID string `json:"request_id"`
-	Stage     string `json:"stage"`     // e.g., "Downloading build metadata", "Fetching logs"
-	Current   int    `json:"current"`   // Current item number (0 if not applicable)
-	Total     int    `json:"total"`     // Total items (0 if not applicable)
+	Stage     string `json:"stage"`   // e.g., "Downloading build metadata", "Fetching logs"
+	Current   int    `json:"current"` // Current item number (0 if not applicable)
+	Total     int    `json:"total"`   // Total items (0 if not applicable)
 	Timestamp string `json:"timestamp"`
 }
 

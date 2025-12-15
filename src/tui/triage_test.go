@@ -26,8 +26,14 @@ func createTestModel(cards []contracts.TriageCard) MainModel {
 		}
 	}
 
+	// Convert job names to JobInfo
+	jobInfos := make([]JobInfo, len(jobs))
+	for i, jobName := range jobs {
+		jobInfos[i] = JobInfo{Name: jobName, Failed: false}
+	}
+
 	styles := DefaultStyles()
-	header := NewHeaderWithStyles("Destill Analysis", jobs, styles)
+	header := NewHeaderWithStyles("Destill Analysis", jobInfos, styles)
 	listView := NewView()
 	listView.SetItems(items)
 

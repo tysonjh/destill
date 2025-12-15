@@ -174,4 +174,3 @@ func (tf *TestFailure) SplitStackTrace(maxLines int) []string {
 
 	return lines
 }
-

@@ -241,4 +241,3 @@ at com.example.Test.method5(Test.java:50)
 		t.Error("Expected first line to contain 'method1'")
 	}
 }
-
