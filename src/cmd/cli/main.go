@@ -17,6 +17,7 @@ import (
 	"destill-agent/src/contracts"
 	"destill-agent/src/ingest"
 	"destill-agent/src/logger"
+	"destill-agent/src/provider"
 	"destill-agent/src/store"
 	"destill-agent/src/tui"
 )
@@ -205,6 +206,13 @@ Examples:
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		cacheFile, _ := cmd.Flags().GetString("cache")
 
+		// Validate the URL first to provide helpful error messages early
+		if _, err := provider.ParseURL(buildURL); err != nil {
+			userErr := provider.WrapError(err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", userErr)
+			os.Exit(1)
+		}
+
 		// Create the request payload
 		request := struct {
 			RequestID string `json:"request_id"`
@@ -340,6 +348,13 @@ Environment variables:
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		buildURL := args[0]
+
+		// Validate the URL first to provide helpful error messages early
+		if _, err := provider.ParseURL(buildURL); err != nil {
+			userErr := provider.WrapError(err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", userErr)
+			os.Exit(1)
+		}
 
 		// Create the request payload
 		request := struct {
