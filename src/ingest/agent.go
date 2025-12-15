@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,7 +87,7 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 	a.logger.Info("[IngestAgent] Fetching build metadata for %s", buildID)
 
 	// Fetch build metadata
-	build, err := a.buildkiteClient.GetBuild(org, pipeline, buildNumber)
+	build, err := a.buildkiteClient.GetBuild(ctx, org, pipeline, strconv.Itoa(buildNumber))
 	if err != nil {
 		return fmt.Errorf("failed to fetch build: %w", err)
 	}
@@ -107,7 +108,7 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 			job.Name, job.ID, job.State)
 
 		// Fetch job log
-		logContent, err := a.buildkiteClient.GetJobLog(org, pipeline, buildNumber, job.ID)
+		logContent, err := a.buildkiteClient.GetJobLog(ctx, job.ID)
 		if err != nil {
 			a.logger.Error("[IngestAgent] Failed to fetch log for job %s: %v", job.Name, err)
 			continue
@@ -121,10 +122,7 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 			"build_number": fmt.Sprintf("%d", buildNumber),
 			"job_state":    job.State,
 			"job_type":     job.Type,
-		}
-
-		if job.ExitStatus != nil {
-			metadata["exit_status"] = fmt.Sprintf("%d", *job.ExitStatus)
+			"exit_status":  fmt.Sprintf("%d", job.ExitStatus),
 		}
 
 		// Chunk the log
@@ -166,7 +164,7 @@ func (a *Agent) processJUnitArtifacts(ctx context.Context, req contracts.Analysi
 	org, pipeline string, buildNumber int, job buildkite.Job) int {
 
 	// Fetch artifacts for this job
-	artifacts, err := a.buildkiteClient.GetJobArtifacts(org, pipeline, buildNumber, job.ID)
+	artifacts, err := a.buildkiteClient.GetJobArtifacts(ctx, job.ID)
 	if err != nil {
 		a.logger.Error("[IngestAgent] Failed to fetch artifacts for job %s: %v", job.Name, err)
 		return 0
@@ -214,7 +212,7 @@ func (a *Agent) processJUnitArtifact(ctx context.Context, req contracts.Analysis
 	a.logger.Debug("[IngestAgent] Processing JUnit artifact: %s", artifact.Path)
 
 	// Download the artifact
-	data, err := a.buildkiteClient.DownloadArtifact(artifact.DownloadURL)
+	data, err := a.buildkiteClient.DownloadArtifact(ctx, artifact.DownloadURL)
 	if err != nil {
 		a.logger.Error("[IngestAgent] Failed to download artifact %s: %v", artifact.Path, err)
 		return 0
