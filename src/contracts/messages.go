@@ -70,6 +70,17 @@ type RequestStatus struct {
 	FindingsCount   int
 }
 
+// ProgressUpdate represents progress during build analysis.
+// Published to: destill.progress
+// Key: {request_id}
+type ProgressUpdate struct {
+	RequestID string `json:"request_id"`
+	Stage     string `json:"stage"`     // e.g., "Downloading build metadata", "Fetching logs"
+	Current   int    `json:"current"`   // Current item number (0 if not applicable)
+	Total     int    `json:"total"`     // Total items (0 if not applicable)
+	Timestamp string `json:"timestamp"`
+}
+
 // TopicNames defines the Redpanda topic names used in the agentic architecture
 const (
 	// TopicLogsRaw contains raw log chunks (~500KB each)
@@ -80,4 +91,7 @@ const (
 
 	// TopicRequests contains build analysis requests
 	TopicRequests = "destill.requests"
+
+	// TopicProgress contains progress updates during analysis
+	TopicProgress = "destill.progress"
 )

@@ -40,6 +40,12 @@ func (m MainModel) View() string {
 	// Render header
 	header := m.header.Render(m.width)
 
+	// If we're still loading and have no items yet, show progress
+	if m.status == StatusLoading && len(m.items) == 0 {
+		progressView := m.progress.View()
+		return lipgloss.JoinVertical(lipgloss.Left, header, "\n  "+progressView)
+	}
+
 	// Calculate panel dimensions
 	dims := m.calculateDimensions()
 

@@ -92,6 +92,9 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 		return fmt.Errorf("failed to get provider: %w", err)
 	}
 
+	// Send progress: Downloading build metadata
+	a.publishProgress(ctx, request.RequestID, "Downloading build metadata", 0, 0)
+
 	// Fetch build using provider
 	build, err := prov.FetchBuild(ctx, ref)
 	if err != nil {
@@ -103,9 +106,18 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 	a.logger.Info("[IngestAgent] Fetching build metadata for %s", buildID)
 	a.logger.Info("[IngestAgent] Found %d jobs in build (state: %s)", len(build.Jobs), build.State)
 
+	// Count script jobs for progress tracking
+	scriptJobs := 0
+	for _, job := range build.Jobs {
+		if job.Type == "script" || job.Type == "" {
+			scriptJobs++
+		}
+	}
+
 	// Process each job
 	totalChunks := 0
 	totalJUnitFindings := 0
+	processedJobs := 0
 	for _, job := range build.Jobs {
 		// Skip non-script jobs (GitHub doesn't have this distinction, so Type may be empty)
 		if job.Type != "script" && job.Type != "" {
@@ -115,6 +127,10 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 
 		a.logger.Info("[IngestAgent] Fetching logs for job: %s (id: %s, state: %s)",
 			job.Name, job.ID, job.State)
+
+		// Send progress update
+		processedJobs++
+		a.publishProgress(ctx, request.RequestID, "Fetching logs", processedJobs, scriptJobs)
 
 		// Fetch job log using provider
 		logContent, err := prov.FetchJobLog(ctx, job.ID)
@@ -313,5 +329,26 @@ func (a *Agent) createTriageCardFromJUnit(req contracts.AnalysisRequest, job pro
 			"duration_sec":  fmt.Sprintf("%.3f", failure.Duration),
 		},
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+}
+
+// publishProgress publishes a progress update to the broker.
+func (a *Agent) publishProgress(ctx context.Context, requestID, stage string, current, total int) {
+	update := contracts.ProgressUpdate{
+		RequestID: requestID,
+		Stage:     stage,
+		Current:   current,
+		Total:     total,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	data, err := json.Marshal(update)
+	if err != nil {
+		a.logger.Error("[IngestAgent] Failed to marshal progress update: %v", err)
+		return
+	}
+
+	if err := a.broker.Publish(ctx, contracts.TopicProgress, requestID, data); err != nil {
+		a.logger.Error("[IngestAgent] Failed to publish progress update: %v", err)
 	}
 }

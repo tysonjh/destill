@@ -55,6 +55,7 @@ type MainModel struct {
 	// Streaming support
 	broker         broker.Broker         // Message broker
 	cardChan       <-chan broker.Message // Channel receiving cards from broker
+	progressChan   <-chan broker.Message // Channel receiving progress updates
 	pendingCards   []Item                // Cards waiting to be merged
 	hashMap        map[string]*Item      // For grouping by hash
 	status         LoadStatus            // Current loading status
@@ -63,6 +64,9 @@ type MainModel struct {
 	jobsDiscovered map[string]bool       // Jobs we've seen so far
 	ctx            context.Context       // Context for broker operations
 	cancel         context.CancelFunc    // Cancel function
+
+	// Progress tracking
+	progress ProgressModel // Progress model for showing loading state
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -116,12 +120,21 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 
 	// Subscribe to broker if provided
 	var cardChan <-chan broker.Message
+	var progressChan <-chan broker.Message
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if brk != nil {
 		ctx, cancel = context.WithCancel(context.Background())
 		var err error
 		cardChan, err = brk.Subscribe(ctx, contracts.TopicAnalysisFindings, "tui-consumer")
+		if err != nil {
+			if cancel != nil {
+				cancel()
+			}
+			return err
+		}
+		// Subscribe to progress updates
+		progressChan, err = brk.Subscribe(ctx, contracts.TopicProgress, "tui-progress-consumer")
 		if err != nil {
 			if cancel != nil {
 				cancel()
@@ -139,6 +152,7 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 		ready:          false,
 		broker:         brk,
 		cardChan:       cardChan,
+		progressChan:   progressChan,
 		pendingCards:   nil,
 		hashMap:        hashMap,
 		status:         status,
@@ -147,6 +161,7 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 		jobsDiscovered: jobsDiscovered,
 		ctx:            ctx,
 		cancel:         cancel,
+		progress:       NewProgressModel(),
 	}
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
@@ -182,11 +197,16 @@ func hashMapToSortedItems(hashMap map[string]*Item) []Item {
 
 // Init initializes the model
 func (m MainModel) Init() tea.Cmd {
+	var cmds []tea.Cmd
 	if m.cardChan != nil {
 		// Start listening for cards from broker
-		return listenForCards(m.cardChan)
+		cmds = append(cmds, listenForCards(m.cardChan))
 	}
-	return nil
+	if m.progressChan != nil {
+		// Start listening for progress updates
+		cmds = append(cmds, listenForProgress(m.progressChan))
+	}
+	return tea.Batch(cmds...)
 }
 
 // listenForCards returns a command that waits for the next card from the broker
@@ -206,12 +226,42 @@ func listenForCards(cardChan <-chan broker.Message) tea.Cmd {
 	}
 }
 
+// listenForProgress returns a command that waits for the next progress update from the broker
+func listenForProgress(progressChan <-chan broker.Message) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-progressChan
+		if !ok {
+			// Channel closed
+			return nil
+		}
+
+		var update contracts.ProgressUpdate
+		if err := json.Unmarshal(msg.Value, &update); err != nil {
+			return nil
+		}
+		return ProgressMsg{
+			Stage:   update.Stage,
+			Current: update.Current,
+			Total:   update.Total,
+		}
+	}
+}
+
 // Update handles messages and updates the model
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case ProgressMsg:
+		m.progress, cmd = m.progress.Update(msg)
+		cmds = append(cmds, cmd)
+		// Keep listening for more progress updates
+		if m.progressChan != nil {
+			cmds = append(cmds, listenForProgress(m.progressChan))
+		}
+		return m, tea.Batch(cmds...)
+
 	case cardReceivedMsg:
 		// New card arrived from broker - include all cards (low confidence shown dimmed)
 		m.cardCount++
