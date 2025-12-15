@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -22,46 +23,13 @@ import (
 	"destill-agent/src/tui"
 )
 
-var (
-	// Shared message broker for all agents
-	msgBroker broker.Broker
-	// Context for agent lifecycle
-	agentCtx    context.Context
-	agentCancel context.CancelFunc
-)
-
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "destill",
-	Short: "Destill - A log triage tool for CI/CD pipelines",
-	Long: `Destill is a decoupled, agent-based log triage tool that helps
-analyze and categorize CI/CD build failures.
-
-It uses a stream processing architecture with:
-- Ingestion Agent: Consumes requests and fetches raw logs
-- Analysis Agent: Processes logs and produces ranked failure cards`,
-	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Skip initialization for view command (doesn't need broker or config)
-		if cmd.Name() == "view" {
-			return
-		}
-
-		// Initialize the broker before any command runs
-		msgBroker = broker.NewInMemoryBroker()
-
-		// Create context for agent lifecycle
-		agentCtx, agentCancel = context.WithCancel(context.Background())
-		startStreamPipeline()
-	},
-	PersistentPostRun: func(cmd *cobra.Command, args []string) {
-		// Cancel agent context and clean up broker when done
-		if agentCancel != nil {
-			agentCancel()
-		}
-		if msgBroker != nil {
-			msgBroker.Close()
-		}
-	},
+	Short: "Destill - A build failure triage tool for CI/CD pipelines",
+	Long: `Destill is a build failure triage tool for CI/CD pipelines that can be 
+run as a single, in-memory tool, or deployed as a series of binaries with 
+redpanda and postgres.`,
 }
 
 // viewCmd represents the view command for querying findings from Postgres
@@ -136,6 +104,7 @@ Environment variables:
 		}
 
 		if len(findings) == 0 {
+			// TODO: when no error is found, we should know this definitively and tell the user.
 			fmt.Printf("\nNo findings found for request: %s\n", requestID)
 			fmt.Println("\nPossible reasons:")
 			fmt.Println("  • Request ID doesn't exist (check: SELECT * FROM requests;)")
@@ -206,94 +175,44 @@ Examples:
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		cacheFile, _ := cmd.Flags().GetString("cache")
 
-		// Validate the URL first to provide helpful error messages early
-		if _, err := provider.ParseURL(buildURL); err != nil {
-			userErr := provider.WrapError(err)
-			fmt.Fprintf(os.Stderr, "Error: %v\n", userErr)
+		// Validate build URL
+		if err := validateBuildURL(buildURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Create the request payload
-		request := struct {
-			RequestID string `json:"request_id"`
-			BuildURL  string `json:"build_url"`
-		}{
-			RequestID: fmt.Sprintf("req-%d", time.Now().UnixNano()),
-			BuildURL:  buildURL,
-		}
-
-		// Marshal the request
-		data, err := json.Marshal(request)
+		// Setup local mode infrastructure
+		local, cleanup, err := setupLocalMode()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error marshaling request: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to setup local mode: %v\n", err)
+			os.Exit(1)
+		}
+		defer cleanup()
+
+		// Create analysis request
+		request, err := createAnalysisRequest(buildURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
 			os.Exit(1)
 		}
 
-		// JSON output mode - subscribe BEFORE publishing to avoid race condition
-		ctx := context.Background()
+		// Route to appropriate mode
 		if jsonOutput {
-			// Subscribe first, then publish request
-			if err := collectAndOutputJSONWithRequest(ctx, request.RequestID, data); err != nil {
-				fmt.Fprintf(os.Stderr, "Error collecting findings: %v\n", err)
+			if err := runJSONMode(local, request); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
-			return
-		}
-
-		// Publish to destill.requests topic (for TUI mode)
-		if err := msgBroker.Publish(ctx, contracts.TopicRequests, request.RequestID, data); err != nil {
-			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
-			os.Exit(1)
-		}
-
-		// Check for cache flag
-		var initialCards []contracts.TriageCard
-		if cacheFile != "" {
-			// Try to load from cache
-			if data, err := os.ReadFile(cacheFile); err == nil {
-				if err := json.Unmarshal(data, &initialCards); err == nil {
-					fmt.Printf("📂 Loaded %d cards from cache: %s\n", len(initialCards), cacheFile)
-				}
-			}
-		}
-
-		// Sort initial cards if loaded from cache
-		if len(initialCards) > 0 {
-			sort.Slice(initialCards, func(i, j int) bool {
-				if initialCards[i].ConfidenceScore != initialCards[j].ConfidenceScore {
-					return initialCards[i].ConfidenceScore > initialCards[j].ConfidenceScore
-				}
-				countI := getRecurrenceCount(initialCards[i].Metadata)
-				countJ := getRecurrenceCount(initialCards[j].Metadata)
-				return countI > countJ
-			})
-		}
-
-		// Launch the streaming TUI
-		if len(initialCards) == 0 {
-			fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
 		} else {
-			fmt.Println("🚀 Launching TUI with cached data...")
-		}
-
-		// Brief pause to ensure any remaining log output completes before TUI starts
-		time.Sleep(100 * time.Millisecond)
-
-		// Use broker for streaming if no cache, otherwise nil
-		var brokerForTUI broker.Broker
-		if len(initialCards) == 0 {
-			brokerForTUI = msgBroker
-		}
-
-		if err := tui.StartWithBroker(brokerForTUI, initialCards); err != nil {
-			fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
-			os.Exit(1)
+			if err := runTUIMode(local, request, cacheFile); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	},
 }
 
 // collectAndOutputJSONWithRequest subscribes to findings, publishes request, then collects results
-func collectAndOutputJSONWithRequest(ctx context.Context, requestID string, requestData []byte) error {
+func collectAndOutputJSONWithRequest(ctx context.Context, msgBroker broker.Broker, requestID string, requestData []byte) error {
 	// Subscribe to findings FIRST to avoid race condition
 	cardChan, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "json-output-consumer")
 	if err != nil {
@@ -316,12 +235,13 @@ func collectAndOutputJSONWithRequest(ctx context.Context, requestID string, requ
 	defer timer.Stop()
 
 	// Collect findings until idle timeout
+collectLoop:
 	for {
 		select {
 		case msg, ok := <-cardChan:
 			if !ok {
 				// Channel closed, we're done
-				goto outputResults
+				break collectLoop
 			}
 
 			var card contracts.TriageCard
@@ -330,7 +250,7 @@ func collectAndOutputJSONWithRequest(ctx context.Context, requestID string, requ
 				continue
 			}
 			cards = append(cards, card)
-			fmt.Fprintf(os.Stderr, "Received finding %d (%.2f confidence)\n", len(cards), card.ConfidenceScore)
+			fmt.Fprintf(os.Stderr, "\rCollecting findings... %d received", len(cards))
 
 			// Reset timer on each new finding
 			if !timer.Stop() {
@@ -343,11 +263,12 @@ func collectAndOutputJSONWithRequest(ctx context.Context, requestID string, requ
 
 		case <-timer.C:
 			// No findings for idleTimeout period, analysis is complete
-			goto outputResults
+			break collectLoop
 		}
 	}
 
-outputResults:
+	fmt.Fprintf(os.Stderr, "\nCollected %d findings\n", len(cards))
+
 	// Sort by confidence score (descending)
 	sort.Slice(cards, func(i, j int) bool {
 		if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
@@ -371,7 +292,7 @@ outputResults:
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
 // The agents run indefinitely until the broker is closed.
 // Uses silent logger to prevent log output from interfering with TUI display.
-func startStreamPipeline() {
+func startStreamPipeline(msgBroker broker.Broker, agentCtx context.Context) {
 	// Use silent logger to prevent log pollution in TUI mode
 	log := logger.NewSilentLogger()
 
@@ -434,25 +355,38 @@ Environment variables:
 			os.Exit(1)
 		}
 
-		// Create the request payload
-		request := struct {
-			RequestID string `json:"request_id"`
-			BuildURL  string `json:"build_url"`
-		}{
-			RequestID: fmt.Sprintf("req-%d", time.Now().UnixNano()),
-			BuildURL:  buildURL,
+		// Get Redpanda brokers from environment for distributed mode
+		redpandaBrokersStr := os.Getenv("REDPANDA_BROKERS")
+		if redpandaBrokersStr == "" {
+			fmt.Fprintln(os.Stderr, "ERROR: REDPANDA_BROKERS environment variable is required for distributed mode")
+			fmt.Fprintln(os.Stderr, "Example: export REDPANDA_BROKERS=\"localhost:9092\"")
+			os.Exit(1)
 		}
 
-		// Marshal the request
-		data, err := json.Marshal(request)
+		// Parse comma-separated broker addresses
+		redpandaBrokers := strings.Split(redpandaBrokersStr, ",")
+		for i := range redpandaBrokers {
+			redpandaBrokers[i] = strings.TrimSpace(redpandaBrokers[i])
+		}
+
+		// Initialize Redpanda broker for distributed mode
+		msgBroker, err := broker.NewRedpandaBroker(redpandaBrokers)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error marshaling request: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Failed to connect to Redpanda: %v\n", err)
+			os.Exit(1)
+		}
+		defer msgBroker.Close()
+
+		// Create analysis request
+		request, err := createAnalysisRequest(buildURL)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create request: %v\n", err)
 			os.Exit(1)
 		}
 
 		// Publish to destill.requests topic
 		ctx := context.Background()
-		if err := msgBroker.Publish(ctx, contracts.TopicRequests, request.RequestID, data); err != nil {
+		if err := msgBroker.Publish(ctx, contracts.TopicRequests, request.RequestID, request.Data); err != nil {
 			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
 			os.Exit(1)
 		}
