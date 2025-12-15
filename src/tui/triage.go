@@ -323,17 +323,19 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.header.AddJob(msg.card.JobName, failed)
 
+		// Add card to pending
+		item := Item{Card: msg.card, Rank: 0}
+		m.pendingCards = append(m.pendingCards, item)
+
 		// Auto-switch to first failed job when discovered
 		if failed && !m.autoSwitchedToFailedJob && m.header.GetFilter() == "ALL" {
 			m.autoSwitchedToFailedJob = true
+			// Merge pending cards (including current one) so the failed job's findings are visible
+			m.mergePendingCards()
 			// Switch to this failed job
 			m.header.CycleFilter() // This will cycle from ALL (index 0) to first job (index 1)
 			m.applyFilter()
 		}
-
-		// Add card to pending
-		item := Item{Card: msg.card, Rank: 0}
-		m.pendingCards = append(m.pendingCards, item)
 		m.header.SetPendingCount(len(m.pendingCards))
 		m.header.SetLoadStatus(m.status, m.cardCount, len(m.jobsDiscovered))
 
