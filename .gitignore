@@ -1,0 +1,13 @@
+# Bazel directories
+/bazel-*
+
+# Go build artifacts
+*.exe
+*.test
+*.out
+destill
+
+bin/
+
+# Worktree directories
+.worktrees/
