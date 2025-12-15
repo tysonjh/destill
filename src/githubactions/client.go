@@ -77,35 +77,53 @@ func (c *Client) GetWorkflowRun(ctx context.Context, owner, repo, runID string) 
 	return &run, nil
 }
 
-// GetWorkflowJobs fetches jobs for a workflow run
+// GetWorkflowJobs fetches jobs for a workflow run (handles pagination)
 func (c *Client) GetWorkflowJobs(ctx context.Context, owner, repo, runID string) ([]WorkflowJob, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/actions/runs/%s/jobs", c.baseURL, owner, repo, runID)
+	var allJobs []WorkflowJob
+	page := 1
+	perPage := 100 // GitHub's max per page
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, err
+	for {
+		url := fmt.Sprintf("%s/repos/%s/%s/actions/runs/%s/jobs?per_page=%d&page=%d",
+			c.baseURL, owner, repo, runID, perPage, page)
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Accept", "application/vnd.github+json")
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, string(body))
+		}
+
+		var jobsResp WorkflowJobsResponse
+		if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
+			resp.Body.Close()
+			return nil, err
+		}
+		resp.Body.Close()
+
+		allJobs = append(allJobs, jobsResp.Jobs...)
+
+		// Check if we've fetched all jobs
+		if len(allJobs) >= jobsResp.TotalCount || len(jobsResp.Jobs) < perPage {
+			break
+		}
+
+		page++
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var jobsResp WorkflowJobsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&jobsResp); err != nil {
-		return nil, err
-	}
-
-	return jobsResp.Jobs, nil
+	return allJobs, nil
 }
 
 // GetJobLogs fetches raw logs for a job (returns zip archive URL redirect)
