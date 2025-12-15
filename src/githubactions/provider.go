@@ -69,7 +69,7 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 		}
 
 		build.Jobs = append(build.Jobs, provider.Job{
-			ID:        fmt.Sprintf("%d", ghJob.ID),
+			ID:        fmt.Sprintf("%s/%s/%d", owner, repo, ghJob.ID),
 			Name:      ghJob.Name,
 			Type:      "script", // GitHub Actions doesn't distinguish types
 			State:     mapGitHubStatus(ghJob.Status, ghJob.Conclusion),
@@ -103,10 +103,10 @@ func (p *Provider) FetchJobLog(ctx context.Context, jobID string) (string, error
 
 // FetchArtifacts retrieves artifacts for the workflow run
 func (p *Provider) FetchArtifacts(ctx context.Context, jobID string) ([]provider.Artifact, error) {
-	// GitHub artifacts are per-run, not per-job
-	// Parse job ID to extract owner/repo/runID
-	// This is a limitation - we'll need to refactor to pass run ID
-	// For now, return empty list
+	// Known limitation: GitHub artifacts are per-run, not per-job.
+	// The current provider interface passes jobID, but GitHub's API requires runID.
+	// This will be addressed when the ingest agent is updated to support per-run artifacts.
+	// For now, return empty list as a placeholder implementation.
 	return []provider.Artifact{}, nil
 }
 
