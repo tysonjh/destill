@@ -121,8 +121,10 @@ func (c *Client) GetJobLogs(ctx context.Context, owner, repo string, jobID int64
 	req.Header.Set("Accept", "application/vnd.github+json")
 
 	// Don't follow redirects - we want the redirect URL
+	// Clone the client settings and set custom CheckRedirect
 	client := &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout:   c.httpClient.Timeout,
+		Transport: c.httpClient.Transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -238,9 +240,9 @@ func (c *Client) DownloadArtifact(ctx context.Context, downloadURL string) (map[
 		if err != nil {
 			return nil, err
 		}
+		defer rc.Close()
 
 		content, err := io.ReadAll(rc)
-		rc.Close()
 		if err != nil {
 			return nil, err
 		}
