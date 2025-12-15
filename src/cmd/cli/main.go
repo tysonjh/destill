@@ -229,8 +229,18 @@ Examples:
 			os.Exit(1)
 		}
 
-		// Publish to destill.requests topic
+		// JSON output mode - subscribe BEFORE publishing to avoid race condition
 		ctx := context.Background()
+		if jsonOutput {
+			// Subscribe first, then publish request
+			if err := collectAndOutputJSONWithRequest(ctx, request.RequestID, data); err != nil {
+				fmt.Fprintf(os.Stderr, "Error collecting findings: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+
+		// Publish to destill.requests topic (for TUI mode)
 		if err := msgBroker.Publish(ctx, contracts.TopicRequests, request.RequestID, data); err != nil {
 			fmt.Fprintf(os.Stderr, "Error publishing request: %v\n", err)
 			os.Exit(1)
@@ -259,14 +269,6 @@ Examples:
 			})
 		}
 
-		// JSON output mode
-		if jsonOutput {
-			// TODO: Implement JSON output - would need to collect cards from broker
-			fmt.Fprintln(os.Stderr, "ERROR: --json flag not yet implemented")
-			fmt.Fprintln(os.Stderr, "Use TUI mode (default) or --cache for now")
-			os.Exit(1)
-		}
-
 		// Launch the streaming TUI
 		if len(initialCards) == 0 {
 			fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
@@ -288,6 +290,82 @@ Examples:
 			os.Exit(1)
 		}
 	},
+}
+
+// collectAndOutputJSONWithRequest subscribes to findings, publishes request, then collects results
+func collectAndOutputJSONWithRequest(ctx context.Context, requestID string, requestData []byte) error {
+	// Subscribe to findings FIRST to avoid race condition
+	cardChan, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "json-output-consumer")
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to findings: %w", err)
+	}
+
+	// Now publish the request after we're subscribed
+	if err := msgBroker.Publish(ctx, contracts.TopicRequests, requestID, requestData); err != nil {
+		return fmt.Errorf("failed to publish request: %w", err)
+	}
+
+	// Initialize as empty slice (not nil) so JSON marshals to [] not null
+	cards := []contracts.TriageCard{}
+
+	// Use a timeout to detect when analysis is complete
+	// If no new findings arrive for this duration, we consider analysis done
+	idleTimeout := 10 * time.Second
+	fmt.Fprintf(os.Stderr, "Waiting for findings (will timeout after %v of inactivity)...\n", idleTimeout)
+	timer := time.NewTimer(idleTimeout)
+	defer timer.Stop()
+
+	// Collect findings until idle timeout
+	for {
+		select {
+		case msg, ok := <-cardChan:
+			if !ok {
+				// Channel closed, we're done
+				goto outputResults
+			}
+
+			var card contracts.TriageCard
+			if err := json.Unmarshal(msg.Value, &card); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to unmarshal card: %v\n", err)
+				continue
+			}
+			cards = append(cards, card)
+			fmt.Fprintf(os.Stderr, "Received finding %d (%.2f confidence)\n", len(cards), card.ConfidenceScore)
+
+			// Reset timer on each new finding
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(idleTimeout)
+
+		case <-timer.C:
+			// No findings for idleTimeout period, analysis is complete
+			goto outputResults
+		}
+	}
+
+outputResults:
+	// Sort by confidence score (descending)
+	sort.Slice(cards, func(i, j int) bool {
+		if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
+			return cards[i].ConfidenceScore > cards[j].ConfidenceScore
+		}
+		countI := getRecurrenceCount(cards[i].Metadata)
+		countJ := getRecurrenceCount(cards[j].Metadata)
+		return countI > countJ
+	})
+
+	// Output as JSON
+	output, err := json.MarshalIndent(cards, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal findings to JSON: %w", err)
+	}
+
+	fmt.Println(string(output))
+	return nil
 }
 
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
