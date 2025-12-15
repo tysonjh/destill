@@ -9,7 +9,9 @@ import (
 	"syscall"
 
 	"destill-agent/src/broker"
+	_ "destill-agent/src/buildkite" // Import for provider registration
 	"destill-agent/src/config"
+	_ "destill-agent/src/githubactions" // Import for provider registration
 	"destill-agent/src/ingest"
 	"destill-agent/src/logger"
 )
@@ -43,8 +45,8 @@ func main() {
 	}
 	defer brk.Close()
 
-	// Create ingest agent
-	agent := ingest.NewAgent(brk, cfg.BuildkiteAPIToken, log)
+	// Create ingest agent (no longer needs token - providers get it from env)
+	agent := ingest.NewAgent(brk, log)
 
 	// Setup context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())

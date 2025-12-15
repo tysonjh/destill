@@ -6,30 +6,29 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"destill-agent/src/broker"
-	"destill-agent/src/buildkite"
+	_ "destill-agent/src/buildkite" // Import for provider registration
 	"destill-agent/src/contracts"
+	_ "destill-agent/src/githubactions" // Import for provider registration
 	"destill-agent/src/junit"
 	"destill-agent/src/logger"
+	"destill-agent/src/provider"
 )
 
 // Agent consumes analysis requests and publishes log chunks.
 type Agent struct {
-	broker          broker.Broker
-	buildkiteClient *buildkite.Client
-	logger          logger.Logger
+	broker broker.Broker
+	logger logger.Logger
 }
 
 // NewAgent creates a new ingest agent.
-func NewAgent(brk broker.Broker, buildkiteToken string, log logger.Logger) *Agent {
+func NewAgent(brk broker.Broker, log logger.Logger) *Agent {
 	return &Agent{
-		broker:          brk,
-		buildkiteClient: buildkite.NewClient(buildkiteToken),
-		logger:          log,
+		broker: brk,
+		logger: log,
 	}
 }
 
@@ -77,29 +76,39 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 	a.logger.Info("[IngestAgent] Processing request %s", request.RequestID)
 	a.logger.Info("[IngestAgent] Build URL: %s", request.BuildURL)
 
-	// Extract build information
-	org, pipeline, buildNumber, err := buildkite.ParseBuildURL(request.BuildURL)
+	// Parse URL to detect provider
+	ref, err := provider.ParseURL(request.BuildURL)
 	if err != nil {
+		a.logger.Error("[IngestAgent] Failed to parse build URL: %v", err)
 		return fmt.Errorf("failed to parse build URL: %w", err)
 	}
 
-	buildID := fmt.Sprintf("%s-%s-%d", org, pipeline, buildNumber)
-	a.logger.Info("[IngestAgent] Fetching build metadata for %s", buildID)
+	a.logger.Info("[IngestAgent] Detected provider: %s", ref.Provider)
 
-	// Fetch build metadata
-	build, err := a.buildkiteClient.GetBuild(ctx, org, pipeline, strconv.Itoa(buildNumber))
+	// Get provider implementation
+	prov, err := provider.GetProvider(ref)
 	if err != nil {
+		a.logger.Error("[IngestAgent] Failed to get provider: %v", err)
+		return fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	// Fetch build using provider
+	build, err := prov.FetchBuild(ctx, ref)
+	if err != nil {
+		a.logger.Error("[IngestAgent] Failed to fetch build: %v", err)
 		return fmt.Errorf("failed to fetch build: %w", err)
 	}
 
+	buildID := build.ID
+	a.logger.Info("[IngestAgent] Fetching build metadata for %s", buildID)
 	a.logger.Info("[IngestAgent] Found %d jobs in build (state: %s)", len(build.Jobs), build.State)
 
 	// Process each job
 	totalChunks := 0
 	totalJUnitFindings := 0
 	for _, job := range build.Jobs {
-		// Skip non-script jobs
-		if job.Type != "script" {
+		// Skip non-script jobs (GitHub doesn't have this distinction, so Type may be empty)
+		if job.Type != "script" && job.Type != "" {
 			a.logger.Debug("[IngestAgent] Skipping non-script job: %s (type: %s)", job.Name, job.Type)
 			continue
 		}
@@ -107,8 +116,8 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 		a.logger.Info("[IngestAgent] Fetching logs for job: %s (id: %s, state: %s)",
 			job.Name, job.ID, job.State)
 
-		// Fetch job log
-		logContent, err := a.buildkiteClient.GetJobLog(ctx, job.ID)
+		// Fetch job log using provider
+		logContent, err := prov.FetchJobLog(ctx, job.ID)
 		if err != nil {
 			a.logger.Error("[IngestAgent] Failed to fetch log for job %s: %v", job.Name, err)
 			continue
@@ -117,12 +126,17 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 		// Prepare metadata
 		metadata := map[string]string{
 			"build_url":    request.BuildURL,
-			"org":          org,
-			"pipeline":     pipeline,
-			"build_number": fmt.Sprintf("%d", buildNumber),
+			"build_id":     build.ID,
+			"build_number": build.Number,
 			"job_state":    job.State,
 			"job_type":     job.Type,
-			"exit_status":  fmt.Sprintf("%d", job.ExitStatus),
+			"exit_status":  fmt.Sprintf("%d", job.ExitCode),
+			"provider":     prov.Name(),
+		}
+
+		// Add provider-specific metadata
+		for k, v := range ref.Metadata {
+			metadata[k] = v
 		}
 
 		// Chunk the log
@@ -148,7 +162,7 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 		}
 
 		// Also fetch and process JUnit artifacts for this job
-		junitFindings := a.processJUnitArtifacts(ctx, request, org, pipeline, buildNumber, job)
+		junitFindings := a.processJUnitArtifacts(ctx, prov, request, job)
 		totalJUnitFindings += junitFindings
 	}
 
@@ -160,11 +174,11 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 
 // processJUnitArtifacts fetches and processes JUnit XML artifacts for a job.
 // Returns the number of test failures found.
-func (a *Agent) processJUnitArtifacts(ctx context.Context, req contracts.AnalysisRequest,
-	org, pipeline string, buildNumber int, job buildkite.Job) int {
+func (a *Agent) processJUnitArtifacts(ctx context.Context, prov provider.Provider,
+	req contracts.AnalysisRequest, job provider.Job) int {
 
 	// Fetch artifacts for this job
-	artifacts, err := a.buildkiteClient.GetJobArtifacts(ctx, job.ID)
+	artifacts, err := prov.FetchArtifacts(ctx, job.ID)
 	if err != nil {
 		a.logger.Error("[IngestAgent] Failed to fetch artifacts for job %s: %v", job.Name, err)
 		return 0
@@ -185,7 +199,7 @@ func (a *Agent) processJUnitArtifacts(ctx context.Context, req contracts.Analysi
 			continue
 		}
 
-		findings := a.processJUnitArtifact(ctx, req, job, artifact)
+		findings := a.processJUnitArtifact(ctx, prov, req, job, artifact)
 		totalFindings += findings
 	}
 
@@ -206,13 +220,13 @@ func isJUnitArtifact(path string) bool {
 
 // processJUnitArtifact downloads and processes a single JUnit XML artifact.
 // Returns the number of test failures found.
-func (a *Agent) processJUnitArtifact(ctx context.Context, req contracts.AnalysisRequest,
-	job buildkite.Job, artifact buildkite.Artifact) int {
+func (a *Agent) processJUnitArtifact(ctx context.Context, prov provider.Provider,
+	req contracts.AnalysisRequest, job provider.Job, artifact provider.Artifact) int {
 
 	a.logger.Debug("[IngestAgent] Processing JUnit artifact: %s", artifact.Path)
 
 	// Download the artifact
-	data, err := a.buildkiteClient.DownloadArtifact(ctx, artifact.DownloadURL)
+	data, err := prov.DownloadArtifact(ctx, artifact)
 	if err != nil {
 		a.logger.Error("[IngestAgent] Failed to download artifact %s: %v", artifact.Path, err)
 		return 0
@@ -259,7 +273,7 @@ func (a *Agent) processJUnitArtifact(ctx context.Context, req contracts.Analysis
 }
 
 // createTriageCardFromJUnit converts a JUnit test failure to a TriageCard.
-func (a *Agent) createTriageCardFromJUnit(req contracts.AnalysisRequest, job buildkite.Job,
+func (a *Agent) createTriageCardFromJUnit(req contracts.AnalysisRequest, job provider.Job,
 	artifactPath string, failure junit.TestFailure) contracts.TriageCard {
 
 	return contracts.TriageCard{

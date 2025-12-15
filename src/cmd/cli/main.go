@@ -14,7 +14,6 @@ import (
 
 	"destill-agent/src/analyze"
 	"destill-agent/src/broker"
-	"destill-agent/src/config"
 	"destill-agent/src/contracts"
 	"destill-agent/src/ingest"
 	"destill-agent/src/logger"
@@ -25,8 +24,6 @@ import (
 var (
 	// Shared message broker for all agents
 	msgBroker broker.Broker
-	// Application configuration
-	appConfig *config.Config
 	// Context for agent lifecycle
 	agentCtx    context.Context
 	agentCancel context.CancelFunc
@@ -46,15 +43,6 @@ It uses a stream processing architecture with:
 		// Skip initialization for view command (doesn't need broker or config)
 		if cmd.Name() == "view" {
 			return
-		}
-
-		// Load configuration from environment variables
-		var err error
-		appConfig, err = config.LoadFromEnv()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Configuration error: %v\n", err)
-			fmt.Fprintln(os.Stderr, "Please set the BUILDKITE_API_TOKEN environment variable")
-			os.Exit(1)
 		}
 
 		// Initialize the broker before any command runs
@@ -188,9 +176,13 @@ func getRecurrenceCount(metadata map[string]string) int {
 // analyzeCmd represents the analyze command (local mode)
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze [build-url]",
-	Short: "Analyze a Buildkite build locally with streaming TUI",
-	Long: `Analyzes a Buildkite build in local mode using in-memory processing.
+	Short: "Analyze a CI/CD build locally with streaming TUI",
+	Long: `Analyzes a CI/CD build in local mode using in-memory processing.
 All analysis happens in a single process with agents running as goroutines.
+
+Supports:
+  - Buildkite: https://buildkite.com/org/pipeline/builds/123 (requires BUILDKITE_API_TOKEN)
+  - GitHub Actions: https://github.com/owner/repo/actions/runs/456 (requires GITHUB_TOKEN)
 
 By default: Launches the TUI immediately. Cards appear in real-time as they are
 analyzed. Press 'r' to refresh/re-rank the list when new cards arrive.
@@ -202,8 +194,9 @@ during development.
 
 This is the simplest mode - no infrastructure required, just the CLI binary.
 
-Example:
+Examples:
   destill analyze https://buildkite.com/org/pipeline/builds/4091
+  destill analyze https://github.com/owner/repo/actions/runs/123456
   destill analyze https://buildkite.com/org/pipeline/builds/4091 --json
   destill analyze https://buildkite.com/org/pipeline/builds/4091 --cache build.json`,
 	Args: cobra.ExactArgs(1),
@@ -297,7 +290,7 @@ func startStreamPipeline() {
 	log := logger.NewSilentLogger()
 
 	// Start Ingestion Agent as a persistent goroutine
-	ingestionAgent := ingest.NewAgent(msgBroker, appConfig.BuildkiteAPIToken, log)
+	ingestionAgent := ingest.NewAgent(msgBroker, log)
 	go func() {
 		if err := ingestionAgent.Run(agentCtx); err != nil && err != context.Canceled {
 			// Error logging always goes to stderr even in silent mode
@@ -319,8 +312,12 @@ func startStreamPipeline() {
 var submitCmd = &cobra.Command{
 	Use:   "submit [build-url]",
 	Short: "Submit a build for analysis in distributed mode",
-	Long: `Submits a Buildkite build URL for analysis in distributed mode.
+	Long: `Submits a CI/CD build URL for analysis in distributed mode.
 This command publishes the request to Redpanda and returns immediately.
+
+Supports:
+  - Buildkite: https://buildkite.com/org/pipeline/builds/123 (requires BUILDKITE_API_TOKEN)
+  - GitHub Actions: https://github.com/owner/repo/actions/runs/456 (requires GITHUB_TOKEN)
 
 Requires:
 - destill-ingest agent running (processes requests and fetches logs)
@@ -331,11 +328,13 @@ Requires:
 The request is queued and processed asynchronously by the agents.
 Use 'destill view <request-id>' to see results once processing is complete.
 
-Example:
+Examples:
   destill submit https://buildkite.com/org/pipeline/builds/4091
+  destill submit https://github.com/owner/repo/actions/runs/123456
 
 Environment variables:
-  BUILDKITE_API_TOKEN - Required. Buildkite API token
+  BUILDKITE_API_TOKEN - Required for Buildkite builds
+  GITHUB_TOKEN        - Required for GitHub Actions builds
   REDPANDA_BROKERS    - Required. Comma-separated broker addresses
   POSTGRES_DSN        - Required. Postgres connection string`,
 	Args: cobra.ExactArgs(1),

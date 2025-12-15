@@ -13,15 +13,15 @@ import (
 
 func TestAgent_ProcessRequest(t *testing.T) {
 	// This is a unit test for the agent's processRequest method
-	// Since we can't easily mock the Buildkite client, we'll test the chunker integration
+	// Since we can't easily mock the provider, we'll test the chunker integration
 
 	// Create in-memory broker
 	brk := broker.NewInMemoryBroker()
 	defer brk.Close()
 
-	// Create agent (will fail on real Buildkite API calls, but that's OK for this test)
+	// Create agent (no longer needs token - providers get it from env)
 	log := logger.NewSilentLogger()
-	agent := NewAgent(brk, "fake-token", log)
+	agent := NewAgent(brk, log)
 
 	// Verify agent is created
 	if agent == nil {
@@ -29,9 +29,6 @@ func TestAgent_ProcessRequest(t *testing.T) {
 	}
 	if agent.broker == nil {
 		t.Error("Expected broker to be set")
-	}
-	if agent.buildkiteClient == nil {
-		t.Error("Expected buildkite client to be set")
 	}
 	if agent.logger == nil {
 		t.Error("Expected logger to be set")
