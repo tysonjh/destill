@@ -56,6 +56,12 @@ func AnalyzeChunk(chunk contracts.LogChunk) []Finding {
 		return nil
 	}
 
+	// Check if this job failed (exit status != 0)
+	jobFailed := false
+	if exitStatus, ok := chunk.Metadata["exit_status"]; ok && exitStatus != "0" {
+		jobFailed = true
+	}
+
 	var findings []Finding
 
 	// Process each line
@@ -76,6 +82,11 @@ func AnalyzeChunk(chunk contracts.LogChunk) []Finding {
 
 		// Calculate confidence
 		confidence := calculateConfidence(trimmed, severity)
+
+		// Boost confidence for errors from failed jobs
+		if jobFailed {
+			confidence = boostConfidenceForFailedJob(confidence)
+		}
 
 		// Skip low confidence findings
 		if confidence < 0.5 {
@@ -156,6 +167,29 @@ func calculateConfidence(line string, severity string) float64 {
 	}
 
 	return score
+}
+
+// boostConfidenceForFailedJob boosts confidence scores for findings from failed jobs.
+// Errors from failed jobs are much more likely to be the actual root cause than
+// errors from passing jobs (which are often test output or transient issues).
+func boostConfidenceForFailedJob(baseConfidence float64) float64 {
+	// Apply a multiplicative boost that's stronger for lower confidence scores
+	// This helps surface findings that might otherwise be filtered out
+	boost := 0.25
+
+	// Don't boost if already very high confidence
+	if baseConfidence >= 0.9 {
+		return baseConfidence
+	}
+
+	boosted := baseConfidence + boost
+
+	// Cap at 1.0
+	if boosted > 1.0 {
+		return 1.0
+	}
+
+	return boosted
 }
 
 // normalizeMessage normalizes a log message for deduplication.
