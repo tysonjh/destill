@@ -62,8 +62,16 @@ func convertToFinding(card contracts.TriageCard, alsoInPassing bool) Finding {
 }
 
 // TierFindings groups cards into tiers and returns a TieredResponse.
-// limit specifies max findings per tier.
+// limit specifies max findings per tier (must be > 0).
+//
+// Note: This function sorts the input slice by confidence (descending).
+// Note: Build field is not populated here - caller should set it.
+// Note: Tier 2 (frequency spikes) is not yet implemented.
 func TierFindings(cards []contracts.TriageCard, limit int) TieredResponse {
+	if limit <= 0 {
+		limit = 15 // default
+	}
+
 	// Build job state map for cross-job analysis
 	jobStates := buildJobStateMap(cards)
 
