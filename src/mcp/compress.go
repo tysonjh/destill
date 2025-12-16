@@ -20,3 +20,12 @@ var hashPattern = regexp.MustCompile(`\b[a-f0-9]{12,}\b`)
 func maskHashes(line string) string {
 	return hashPattern.ReplaceAllString(line, "<HASH>")
 }
+
+// longPathPattern matches absolute paths with 3+ directories.
+// Captures the filename (and optional line number) at the end.
+var longPathPattern = regexp.MustCompile(`/(?:[^/\s]+/){3,}([^/\s:]+(?::\d+)?)`)
+
+// compressPath shortens long file paths to .../filename.
+func compressPath(line string) string {
+	return longPathPattern.ReplaceAllString(line, ".../$1")
+}

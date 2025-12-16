@@ -87,3 +87,46 @@ func TestMaskHashes(t *testing.T) {
 		})
 	}
 }
+
+func TestCompressPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "long absolute path",
+			input:    "/var/lib/jenkins/workspace/pipeline-123/src/test/java/com/app/AuthTest.java:45",
+			expected: ".../AuthTest.java:45",
+		},
+		{
+			name:     "path with line reference",
+			input:    "File /home/user/project/src/main/Service.go:123 - error",
+			expected: "File .../Service.go:123 - error",
+		},
+		{
+			name:     "short path preserved",
+			input:    "src/main.go:10 - warning",
+			expected: "src/main.go:10 - warning",
+		},
+		{
+			name:     "no path",
+			input:    "Connection refused",
+			expected: "Connection refused",
+		},
+		{
+			name:     "multiple paths",
+			input:    "/a/b/c/file1.go:1 imports /d/e/f/file2.go:2",
+			expected: ".../file1.go:1 imports .../file2.go:2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := compressPath(tt.input)
+			if result != tt.expected {
+				t.Errorf("compressPath(%q) = %q, expected %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
