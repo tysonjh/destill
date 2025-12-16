@@ -189,8 +189,6 @@ func sortCardsByPriority(cards []contracts.TriageCard) {
 		if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
 			return cards[i].ConfidenceScore > cards[j].ConfidenceScore
 		}
-		countI := getRecurrenceCount(cards[i].Metadata)
-		countJ := getRecurrenceCount(cards[j].Metadata)
-		return countI > countJ
+		return cards[i].GetRecurrenceCount() > cards[j].GetRecurrenceCount()
 	})
 }

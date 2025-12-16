@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -68,8 +67,7 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 	for _, card := range cards {
 		if existing, ok := hashMap[card.MessageHash]; ok {
 			// Increment recurrence count
-			count := existing.GetRecurrence() + 1
-			existing.Card.Metadata["recurrence_count"] = strconv.Itoa(count)
+			existing.Card.SetRecurrenceCount(existing.GetRecurrence() + 1)
 		} else {
 			item := Item{Card: card, Rank: 0}
 			hashMap[card.MessageHash] = &item
@@ -500,8 +498,7 @@ func (m *MainModel) mergePendingCards() {
 	for _, item := range m.pendingCards {
 		if existing, ok := m.hashMap[item.Card.MessageHash]; ok {
 			// Increment recurrence count
-			count := existing.GetRecurrence() + 1
-			existing.Card.Metadata["recurrence_count"] = string(rune('0' + count))
+			existing.Card.SetRecurrenceCount(existing.GetRecurrence() + 1)
 		} else {
 			itemCopy := item
 			m.hashMap[item.Card.MessageHash] = &itemCopy

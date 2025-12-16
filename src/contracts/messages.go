@@ -1,6 +1,8 @@
 // Package contracts defines message types for the Distributed Data Plane architecture.
 package contracts
 
+import "fmt"
+
 // LogChunk represents a chunk of log data for the distributed architecture.
 // Published to: destill.logs.raw
 // Key: {build_id}
@@ -79,6 +81,52 @@ type ProgressUpdate struct {
 	Current   int    `json:"current"` // Current item number (0 if not applicable)
 	Total     int    `json:"total"`   // Total items (0 if not applicable)
 	Timestamp string `json:"timestamp"`
+}
+
+// GetRecurrenceCount returns the recurrence count from metadata, defaulting to 1.
+func (c *TriageCard) GetRecurrenceCount() int {
+	if c.Metadata == nil {
+		return 1
+	}
+	if countStr, ok := c.Metadata["recurrence_count"]; ok {
+		var count int
+		if _, err := fmt.Sscanf(countStr, "%d", &count); err == nil {
+			return count
+		}
+	}
+	return 1
+}
+
+// SetRecurrenceCount sets the recurrence count in metadata.
+func (c *TriageCard) SetRecurrenceCount(count int) {
+	if c.Metadata == nil {
+		c.Metadata = make(map[string]string)
+	}
+	c.Metadata["recurrence_count"] = fmt.Sprintf("%d", count)
+}
+
+// DeduplicateCards removes duplicate findings by MessageHash.
+// When duplicates are found, the first occurrence is kept and its recurrence count
+// is incremented.
+func DeduplicateCards(cards []TriageCard) []TriageCard {
+	seen := make(map[string]int) // MessageHash -> index in result slice
+	result := []TriageCard{}
+
+	for _, card := range cards {
+		if idx, exists := seen[card.MessageHash]; exists {
+			// Duplicate found - increment recurrence count on existing card
+			result[idx].SetRecurrenceCount(result[idx].GetRecurrenceCount() + 1)
+		} else {
+			// First occurrence - add to result
+			seen[card.MessageHash] = len(result)
+			if card.GetRecurrenceCount() == 1 {
+				card.SetRecurrenceCount(1) // Ensure metadata is initialized
+			}
+			result = append(result, card)
+		}
+	}
+
+	return result
 }
 
 // TopicNames defines the Redpanda topic names used in the distributed architecture

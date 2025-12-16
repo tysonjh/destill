@@ -1,10 +1,6 @@
 package tui
 
-import (
-	"strconv"
-
-	"destill-agent/src/contracts"
-)
+import "destill-agent/src/contracts"
 
 // Item represents an item that can be displayed in the triage list.
 // It wraps the domain TriageCard and implements bubbles/list.Item.
@@ -24,13 +20,9 @@ func (i Item) Description() string { return i.Card.JobName }
 
 // Helper methods for easier data access in the view
 
+// GetRecurrence returns the recurrence count for this item.
 func (i Item) GetRecurrence() int {
-	if countStr, ok := i.Card.Metadata["recurrence_count"]; ok {
-		if count, err := strconv.Atoi(countStr); err == nil {
-			return count
-		}
-	}
-	return 1
+	return i.Card.GetRecurrenceCount()
 }
 
 func (i Item) GetPreContext() []string {

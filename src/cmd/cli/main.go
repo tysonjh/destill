@@ -129,20 +129,6 @@ func isURL(s string) bool {
 	return len(s) > 4 && (s[:4] == "http" || s[:5] == "https")
 }
 
-// getRecurrenceCount extracts the recurrence count from metadata
-func getRecurrenceCount(metadata map[string]string) int {
-	if metadata == nil {
-		return 1
-	}
-	if count, ok := metadata["recurrence_count"]; ok {
-		var c int
-		if _, err := fmt.Sscanf(count, "%d", &c); err == nil {
-			return c
-		}
-	}
-	return 1
-}
-
 // analyzeCmd represents the analyze command (local mode)
 var analyzeCmd = &cobra.Command{
 	Use:   "analyze [build-url]",
@@ -272,14 +258,16 @@ collectLoop:
 
 	fmt.Fprintf(os.Stderr, "\nCollected %d findings\n", len(cards))
 
-	// Sort by confidence score (descending)
+	// Deduplicate by MessageHash, tracking recurrence count
+	cards = contracts.DeduplicateCards(cards)
+	fmt.Fprintf(os.Stderr, "Deduplicated to %d unique findings\n", len(cards))
+
+	// Sort by confidence score (descending), then recurrence count (descending)
 	sort.Slice(cards, func(i, j int) bool {
 		if cards[i].ConfidenceScore != cards[j].ConfidenceScore {
 			return cards[i].ConfidenceScore > cards[j].ConfidenceScore
 		}
-		countI := getRecurrenceCount(cards[i].Metadata)
-		countJ := getRecurrenceCount(cards[j].Metadata)
-		return countI > countJ
+		return cards[i].GetRecurrenceCount() > cards[j].GetRecurrenceCount()
 	})
 
 	// Print job summary header to stderr (before JSON output)
