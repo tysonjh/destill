@@ -65,6 +65,43 @@ export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=d
 
 See [QUICK_START_DISTRIBUTED.md](./QUICK_START_DISTRIBUTED.md) for setup.
 
+## MCP server
+
+Destill provides an MCP (Model Context Protocol) server that lets LLM-powered tools analyze builds directly. This works with Claude Code, Gemini CLI, and other MCP-compatible assistants.
+
+### Setup
+
+```bash
+make build
+claude mcp add destill -- /path/to/destill/bin/destill mcp-server
+```
+
+Or install first for a simpler command:
+
+```bash
+make install
+claude mcp add destill -- destill mcp-server
+```
+
+Use `--scope project` to limit availability to a specific project.
+
+For other MCP clients, run `destill mcp-server` directly. The server communicates over stdio.
+
+### Available tools
+
+| Tool | Description |
+|------|-------------|
+| `analyze_build` | Analyze a build URL and return tiered findings |
+| `get_finding_details` | Get full context for a specific finding |
+
+### Example
+
+Ask your assistant:
+
+> Analyze this build: https://buildkite.com/org/pipeline/builds/123
+
+The assistant receives tiered findings (unique failures, frequency spikes, common noise) and summarizes the root cause.
+
 ## Configuration
 
 | Variable | Description |

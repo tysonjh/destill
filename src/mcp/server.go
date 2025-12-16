@@ -167,7 +167,10 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 		BuildURL:  buildURL,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
-	reqData, _ := json.Marshal(req)
+	reqData, err := json.Marshal(req)
+	if err != nil {
+		return nil, BuildInfo{}, fmt.Errorf("failed to marshal request: %w", err)
+	}
 	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
 
 	// Collect findings with timeout
@@ -218,12 +221,19 @@ func (s *Server) collectFindings(ctx context.Context, msgBroker broker.Broker) (
 func extractBuildInfo(cards []contracts.TriageCard, url string) BuildInfo {
 	failedJobs := make(map[string]bool)
 	passedJobs := make(map[string]bool)
+	otherJobs := make(map[string]bool)
 
 	for _, card := range cards {
-		if card.Metadata["job_state"] == "failed" {
+		switch card.Metadata["job_state"] {
+		case "failed":
 			failedJobs[card.JobName] = true
-		} else {
+		case "passed":
 			passedJobs[card.JobName] = true
+		case "":
+			// Skip cards without job_state metadata
+		default:
+			// Track canceled, skipped, in_progress, etc.
+			otherJobs[card.JobName] = true
 		}
 	}
 
@@ -242,6 +252,7 @@ func extractBuildInfo(cards []contracts.TriageCard, url string) BuildInfo {
 		Status:          status,
 		FailedJobs:      failed,
 		PassedJobsCount: len(passedJobs),
+		OtherJobsCount:  len(otherJobs),
 		Timestamp:       time.Now().UTC().Format(time.RFC3339),
 	}
 }

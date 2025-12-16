@@ -15,6 +15,7 @@ type BuildInfo struct {
 	Status          string   `json:"status"`
 	FailedJobs      []string `json:"failed_jobs"`
 	PassedJobsCount int      `json:"passed_jobs_count"`
+	OtherJobsCount  int      `json:"other_jobs_count,omitempty"` // canceled, skipped, in_progress, etc.
 	Timestamp       string   `json:"timestamp"`
 }
 

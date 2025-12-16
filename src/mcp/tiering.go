@@ -32,17 +32,23 @@ const (
 
 // buildJobStateMap creates a map of normalized_msg -> job state.
 // Values are "failed", "passed", or "both".
+// Cards with missing or empty job_state are skipped.
 func buildJobStateMap(cards []contracts.TriageCard) map[string]string {
 	result := make(map[string]string)
 
 	for _, card := range cards {
 		jobState := card.Metadata["job_state"]
+		if jobState == "" {
+			// Skip cards without job_state to avoid incorrect classification
+			continue
+		}
+
 		pattern := card.NormalizedMsg
 
 		existing, exists := result[pattern]
 		if !exists {
 			result[pattern] = jobState
-		} else if existing != jobState {
+		} else if existing != jobState && existing != "both" {
 			result[pattern] = "both"
 		}
 	}
