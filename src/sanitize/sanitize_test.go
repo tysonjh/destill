@@ -72,3 +72,28 @@ func TestClean(t *testing.T) {
 		})
 	}
 }
+
+func TestCleanLines(t *testing.T) {
+	input := []string{
+		"\x1b[31mline1\x1b[0m\r",
+		"\x1b_bk;t=123\x07line2",
+		"line3",
+	}
+	expected := []string{
+		"line1",
+		"line2",
+		"line3",
+	}
+
+	result := CleanLines(input)
+
+	if len(result) != len(expected) {
+		t.Fatalf("CleanLines() returned %d lines, expected %d", len(result), len(expected))
+	}
+
+	for i, line := range result {
+		if line != expected[i] {
+			t.Errorf("CleanLines()[%d] = %q, expected %q", i, line, expected[i])
+		}
+	}
+}

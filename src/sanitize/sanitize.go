@@ -33,3 +33,12 @@ func Clean(s string) string {
 	s = strings.ReplaceAll(s, "\r", "")
 	return strings.TrimSpace(s)
 }
+
+// CleanLines applies Clean to each line in a slice.
+func CleanLines(lines []string) []string {
+	result := make([]string, len(lines))
+	for i, line := range lines {
+		result[i] = Clean(line)
+	}
+	return result
+}
