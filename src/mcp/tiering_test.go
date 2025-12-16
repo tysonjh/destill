@@ -6,6 +6,29 @@ import (
 	"destill-agent/src/contracts"
 )
 
+func TestBuildJobStateMap(t *testing.T) {
+	cards := []contracts.TriageCard{
+		{NormalizedMsg: "pattern-a", Metadata: map[string]string{"job_state": "failed"}},
+		{NormalizedMsg: "pattern-a", Metadata: map[string]string{"job_state": "passed"}},
+		{NormalizedMsg: "pattern-b", Metadata: map[string]string{"job_state": "failed"}},
+		{NormalizedMsg: "pattern-c", Metadata: map[string]string{"job_state": "passed"}},
+	}
+
+	result := buildJobStateMap(cards)
+
+	expected := map[string]string{
+		"pattern-a": "both",
+		"pattern-b": "failed",
+		"pattern-c": "passed",
+	}
+
+	for pattern, expectedState := range expected {
+		if result[pattern] != expectedState {
+			t.Errorf("buildJobStateMap()[%q] = %q, expected %q", pattern, result[pattern], expectedState)
+		}
+	}
+}
+
 func TestClassifyFinding(t *testing.T) {
 	tests := []struct {
 		name         string
