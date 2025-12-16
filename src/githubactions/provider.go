@@ -117,7 +117,7 @@ func (p *Provider) DownloadArtifact(ctx context.Context, artifact provider.Artif
 		return nil, err
 	}
 
-	// Return first file (JUnit XMLs are typically single files)
+	// Return first file from the artifact
 	for _, content := range files {
 		return content, nil
 	}

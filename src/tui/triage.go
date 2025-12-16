@@ -113,33 +113,15 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 func initializeHeader(styles *StyleConfig, state *initialState, status LoadStatus) Header {
 	header := NewHeaderWithStyles("Destill Analysis", state.allJobs, styles)
 	header.SetLoadStatus(status, len(state.items), len(state.jobsDiscovered))
-
-	// Default to first failed job if any exist
-	if len(state.failedJobs) > 0 {
-		header.SetInitialFilter(state.failedJobs[0].Name, true)
-	}
-
+	// Stay on "ALL" - failed job findings are already boosted to top by confidence
 	return header
 }
 
 // initializeListView creates and configures the list view with initial items.
 func initializeListView(state *initialState) View {
 	listView := NewView()
-
-	// Apply initial filter if defaulting to a failed job
-	var initialItems []Item
-	if len(state.failedJobs) > 0 {
-		// Filter to show only the first failed job's items
-		for _, item := range state.items {
-			if item.Card.JobName == state.failedJobs[0].Name {
-				initialItems = append(initialItems, item)
-			}
-		}
-	} else {
-		initialItems = state.items
-	}
-
-	listView.SetItems(initialItems)
+	// Show all items - failed job findings are already boosted to top by confidence
+	listView.SetItems(state.items)
 	return listView
 }
 
@@ -202,8 +184,6 @@ type MainModel struct {
 	// Progress tracking
 	progress ProgressModel // Progress model for showing loading state
 
-	// Auto-switch tracking
-	autoSwitchedToFailedJob bool // Track if we've auto-switched to first failed job
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -381,16 +361,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Add card to pending
 		item := Item{Card: msg.card, Rank: 0}
 		m.pendingCards = append(m.pendingCards, item)
-
-		// Auto-switch to first failed job when discovered
-		if failed && !m.autoSwitchedToFailedJob && m.header.GetFilter() == "ALL" {
-			m.autoSwitchedToFailedJob = true
-			// Merge pending cards (including current one) so the failed job's findings are visible
-			m.mergePendingCards()
-			// Switch to this failed job
-			m.header.CycleFilter() // This will cycle from ALL (index 0) to first job (index 1)
-			m.applyFilter()
-		}
+		// Stay on "ALL" - failed job findings are boosted to top by confidence
 		m.header.SetPendingCount(len(m.pendingCards))
 		m.header.SetLoadStatus(m.status, m.cardCount, len(m.jobsDiscovered))
 

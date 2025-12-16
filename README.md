@@ -1,12 +1,12 @@
 # Destill - CI/CD Build Failure Analyzer
 
-Destill helps engineers quickly find the root cause of build failures by analyzing logs with pattern-based detection and JUnit parsing.
+Destill helps engineers quickly find the root cause of build failures by analyzing logs with pattern-based detection and smart confidence scoring.
 
 ## Features
 
 - 🔍 **Multi-Platform Support**: Buildkite and GitHub Actions
 - ⚡ **Fast Local Analysis**: No infrastructure required
-- 🎯 **Smart Confidence Scoring**: JUnit parsing (1.0) + pattern-based detection (0.0-1.0)
+- 🎯 **Smart Confidence Scoring**: Failed jobs get boosted confidence + pattern-based detection
 - 🤖 **Claude Integration**: MCP server for AI-assisted debugging
 - 📊 **Interactive TUI**: Real-time findings sorted by confidence
 - 🔧 **Self-Hosted Option**: Optional distributed mode with Redpanda + Postgres
@@ -58,7 +58,7 @@ Next time a build fails, run `destill analyze` with the build URL:
 ### 4. What You Get
 
 *   **Ranked Findings**: The most likely errors are shown at the top (based on confidence score).
-*   **JUnit Integration**: Test failures are parsed and shown with 1.0 confidence.
+*   **Failed Job Boosting**: Errors from failed jobs get higher confidence scores.
 *   **Smart Context**: See the error lines plus relevant context, stripped of noise.
 *   **Interactive TUI**: Navigate findings in a real-time terminal user interface.
 
@@ -95,15 +95,15 @@ We welcome your feedback to improve Destill. Please open a GitHub issue to share
 
 Destill is a **distributed log analysis system** that automatically:
 
-1. **Ingests** build logs and JUnit XML artifacts from Buildkite and GitHub Actions
+1. **Ingests** build logs from Buildkite and GitHub Actions
 2. **Analyzes** logs to detect errors and failures (stateless processing)
-3. **Parses** JUnit XML for definitive test failures (1.0 confidence)
+3. **Boosts** confidence for errors from failed jobs
 4. **Persists** findings to Postgres (via Redpanda Connect)
 5. **Displays** results in an interactive TUI (sorted by confidence)
 
 ### Key Features
 
-- ✅ **JUnit XML Support**: Automatic parsing of JUnit test results (1.0 confidence)
+- ✅ **Failed Job Detection**: Errors from failed jobs get boosted confidence
 - ✅ **Stateless Agents**: Horizontally scalable ingest and analyze agents
 - ✅ **Smart Chunking**: 500KB chunks with 50-line overlap for context
 - ✅ **Error Detection**: Pattern-based severity detection with confidence scoring
@@ -115,15 +115,12 @@ Destill is a **distributed log analysis system** that automatically:
 ## 🏗️ Architecture
 
 ```
-User Request → Ingest Agent ─┬→ Redpanda → Analyze Agent → Redpanda ─┬→ Postgres → TUI
-              (fetches logs)  │  (chunks)   (finds errors)  (findings) │  (stores)  (displays)
-              (fetches junit) └───────────────────────────────────────┘
-                                 (JUnit findings: 1.0 confidence)
+User Request → Ingest Agent → Redpanda → Analyze Agent → Redpanda → Postgres → TUI
+              (fetches logs)   (chunks)   (finds errors)  (findings)  (stores)  (displays)
 ```
 
-**Dual-Source Processing**:
-- **Log Analysis**: Ingest → chunk → analyze → findings (0.0-1.0 confidence)
-- **JUnit Parsing**: Ingest → parse → findings (1.0 confidence, bypasses analyze)
+**Processing Flow**:
+- Ingest → chunk → analyze → findings (confidence boosted for failed jobs)
 
 See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documentation.
 
@@ -144,72 +141,6 @@ See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for detailed architecture documenta
 - **Postgres** - Persistent storage
 - **Redpanda Connect** - Stream processor (Kafka → Postgres)
 - **Redpanda Console** - Web UI for monitoring
-
-## 🧪 JUnit XML Support
-
-Destill automatically detects and parses JUnit XML test results from Buildkite artifacts, providing **definitive test failure findings with 1.0 confidence**.
-
-### How It Works
-
-1. **Automatic Detection**: When processing a build, the ingest agent checks each job for artifacts matching `junit*.xml`
-2. **XML Parsing**: JUnit XML is parsed to extract `<failure>` and `<error>` elements
-3. **High Confidence**: Test failures receive 1.0 confidence (definitive, not heuristic)
-4. **Bypass Analysis**: JUnit findings skip the analyze agent (already structured data)
-5. **TUI Integration**: Test failures appear at the top of the TUI (sorted by confidence)
-
-### Setup Requirements
-
-**In your Buildkite pipeline**, upload JUnit XML artifacts:
-
-```yaml
-steps:
-  - label: "Run Tests"
-    command: "make test"
-    artifact_paths: "test-results/junit*.xml"  # Upload JUnit XML
-```
-
-**That's it!** Destill will automatically:
-- ✅ Detect JUnit XML artifacts
-- ✅ Parse test failures
-- ✅ Create high-confidence findings
-- ✅ Display in TUI alongside log-based findings
-
-### Example Finding
-
-A JUnit test failure appears in the TUI like this:
-
-```
-Rank #1 | ⚠️  ERROR | Confidence: 1.00 | Recurrence: 1x
-Source: junit:test-results/junit.xml
-Job: test-suite
-
-[failure] com.example.MyTest.testFoo: expected true but was false
-
-Stack Trace:
-  at com.example.MyTest.testFoo(MyTest.java:42)
-  at org.junit.runners.ParentRunner.run(ParentRunner.java:238)
-  ...
-
-Metadata:
-  test_name: testFoo
-  class_name: com.example.MyTest
-  duration_sec: 0.123
-```
-
-### Benefits
-
-- **🎯 Definitive**: Test failures are ground truth (not pattern matching)
-- **⚡ Fast**: No LLM or heuristic analysis needed
-- **🔍 Traceable**: Full stack traces and test metadata preserved
-- **📊 Integrated**: Appears alongside log-based findings in unified view
-
-### Supported Formats
-
-Destill supports standard JUnit XML formats:
-- ✅ Single `<testsuite>` (most common)
-- ✅ Multiple `<testsuites>` (nested format)
-- ✅ Both `<failure>` and `<error>` elements
-- ✅ Captures: test name, class, message, stack trace, duration
 
 ## 📚 Documentation
 
@@ -385,7 +316,6 @@ Test coverage by package:
 - Pipeline: 2 tests ✅
 - Ingest: 11 tests ✅
 - Analyze: 15 tests ✅
-- JUnit: 8 tests ✅
 
 ## 🤝 Contributing
 

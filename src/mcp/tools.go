@@ -12,13 +12,14 @@ import (
 
 	"destill-agent/src/analyze"
 	"destill-agent/src/ingest"
-	"destill-agent/src/junit"
 	"destill-agent/src/provider"
 )
 
 // AnalyzeBuildInput defines the input parameters for analyze_build tool
 type AnalyzeBuildInput struct {
-	URL string `json:"url" jsonschema:"required"`
+	URL    string `json:"url" jsonschema:"required"`
+	Offset int    `json:"offset,omitempty"` // Skip first N findings (default: 0)
+	Limit  int    `json:"limit,omitempty"`  // Max findings to return (default: 25)
 }
 
 // AnalyzeBuildOutput defines the output structure for analyze_build tool
@@ -28,7 +29,10 @@ type AnalyzeBuildOutput struct {
 	BuildState    string        `json:"build_state"`
 	Provider      string        `json:"provider"`
 	JobsAnalyzed  int           `json:"jobs_analyzed"`
-	FindingsCount int           `json:"findings_count"`
+	TotalFindings int           `json:"total_findings"` // Total findings before pagination
+	Offset        int           `json:"offset"`         // Current offset
+	Limit         int           `json:"limit"`          // Current limit
+	HasMore       bool          `json:"has_more"`       // More findings available
 	Findings      []FindingItem `json:"findings"`
 }
 
@@ -38,14 +42,13 @@ type FindingItem struct {
 	Message         string  `json:"message"`
 	JobName         string  `json:"job_name"`
 	ConfidenceScore float64 `json:"confidence_score"`
-	Source          string  `json:"source"` // "log" or "junit"
 }
 
 // RegisterAnalyzeBuildTool registers the analyze_build tool with the MCP server
 func RegisterAnalyzeBuildTool(server *mcp.Server) {
 	tool := &mcp.Tool{
 		Name:        "analyze_build",
-		Description: "Analyze a CI/CD build and return findings sorted by confidence. Supports Buildkite and GitHub Actions. Returns error messages, test failures, and other issues found in build logs.",
+		Description: "Analyze a CI/CD build and return findings sorted by confidence. Supports Buildkite and GitHub Actions. Returns top 25 findings by default. Use offset/limit params to paginate (e.g., offset=25 for next page).",
 	}
 
 	handler := func(ctx context.Context, req *mcp.CallToolRequest, args AnalyzeBuildInput) (*mcp.CallToolResult, any, error) {
@@ -54,8 +57,18 @@ func RegisterAnalyzeBuildTool(server *mcp.Server) {
 			return nil, nil, fmt.Errorf("url parameter is required")
 		}
 
+		// Apply defaults for pagination
+		limit := args.Limit
+		if limit <= 0 {
+			limit = 25
+		}
+		offset := args.Offset
+		if offset < 0 {
+			offset = 0
+		}
+
 		// Run the analysis
-		output, err := analyzeBuild(ctx, args.URL)
+		output, err := analyzeBuild(ctx, args.URL, offset, limit)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -78,7 +91,7 @@ func RegisterAnalyzeBuildTool(server *mcp.Server) {
 }
 
 // analyzeBuild performs the actual build analysis
-func analyzeBuild(ctx context.Context, buildURL string) (*AnalyzeBuildOutput, error) {
+func analyzeBuild(ctx context.Context, buildURL string, offset, limit int) (*AnalyzeBuildOutput, error) {
 	// Parse the URL to detect provider
 	ref, err := provider.ParseURL(buildURL)
 	if err != nil {
@@ -133,49 +146,6 @@ func analyzeBuild(ctx context.Context, buildURL string) (*AnalyzeBuildOutput, er
 					Message:         finding.RawMessage,
 					JobName:         job.Name,
 					ConfidenceScore: finding.ConfidenceScore,
-					Source:          "log",
-				})
-			}
-		}
-
-		// Fetch and analyze JUnit artifacts
-		artifacts, err := prov.FetchArtifacts(ctx, job.ID)
-		if err != nil {
-			// Artifacts may not exist, continue
-			continue
-		}
-
-		for _, artifact := range artifacts {
-			// Only process JUnit XML files
-			if !strings.HasPrefix(artifact.Path, "junit") || !strings.HasSuffix(artifact.Path, ".xml") {
-				continue
-			}
-
-			// Download artifact
-			data, err := prov.DownloadArtifact(ctx, artifact)
-			if err != nil {
-				continue
-			}
-
-			// Parse JUnit XML
-			failures, err := junit.Parse(data)
-			if err != nil {
-				continue
-			}
-
-			// Add JUnit failures as findings with confidence 1.0
-			for _, failure := range failures {
-				message := fmt.Sprintf("Test failed: %s.%s", failure.SuiteName, failure.TestName)
-				if failure.Message != "" {
-					message += fmt.Sprintf(" - %s", failure.Message)
-				}
-
-				allFindings = append(allFindings, FindingItem{
-					Severity:        "ERROR",
-					Message:         message,
-					JobName:         job.Name,
-					ConfidenceScore: 1.0, // JUnit failures have highest confidence
-					Source:          "junit",
 				})
 			}
 		}
@@ -186,13 +156,32 @@ func analyzeBuild(ctx context.Context, buildURL string) (*AnalyzeBuildOutput, er
 		return allFindings[i].ConfidenceScore > allFindings[j].ConfidenceScore
 	})
 
+	// Apply pagination
+	totalFindings := len(allFindings)
+	hasMore := false
+
+	if offset >= totalFindings {
+		allFindings = []FindingItem{}
+	} else {
+		end := offset + limit
+		if end > totalFindings {
+			end = totalFindings
+		} else {
+			hasMore = true
+		}
+		allFindings = allFindings[offset:end]
+	}
+
 	output := &AnalyzeBuildOutput{
 		BuildURL:      buildURL,
 		BuildNumber:   build.Number,
 		BuildState:    build.State,
 		Provider:      prov.Name(),
 		JobsAnalyzed:  jobsAnalyzed,
-		FindingsCount: len(allFindings),
+		TotalFindings: totalFindings,
+		Offset:        offset,
+		Limit:         limit,
+		HasMore:       hasMore,
 		Findings:      allFindings,
 	}
 
@@ -210,10 +199,16 @@ func formatAnalysisOutput(output *AnalyzeBuildOutput) string {
 	sb.WriteString(fmt.Sprintf("Build State: %s\n", output.BuildState))
 	sb.WriteString(fmt.Sprintf("Provider: %s\n", output.Provider))
 	sb.WriteString(fmt.Sprintf("Jobs Analyzed: %d\n", output.JobsAnalyzed))
-	sb.WriteString(fmt.Sprintf("Total Findings: %d\n\n", output.FindingsCount))
+	sb.WriteString(fmt.Sprintf("Total Findings: %d\n", output.TotalFindings))
+	sb.WriteString(fmt.Sprintf("Showing: %d-%d of %d\n\n", output.Offset+1, output.Offset+len(output.Findings), output.TotalFindings))
 
-	if output.FindingsCount == 0 {
+	if output.TotalFindings == 0 {
 		sb.WriteString("No issues found.\n")
+		return sb.String()
+	}
+
+	if len(output.Findings) == 0 {
+		sb.WriteString("No more findings at this offset.\n")
 		return sb.String()
 	}
 
@@ -221,9 +216,8 @@ func formatAnalysisOutput(output *AnalyzeBuildOutput) string {
 	sb.WriteString(fmt.Sprintf("================================\n\n"))
 
 	for i, finding := range output.Findings {
-		sb.WriteString(fmt.Sprintf("%d. [%s] %s\n", i+1, finding.Severity, finding.JobName))
+		sb.WriteString(fmt.Sprintf("%d. [%s] %s\n", output.Offset+i+1, finding.Severity, finding.JobName))
 		sb.WriteString(fmt.Sprintf("   Confidence: %.2f\n", finding.ConfidenceScore))
-		sb.WriteString(fmt.Sprintf("   Source: %s\n", finding.Source))
 
 		// Truncate long messages
 		message := finding.Message
@@ -231,6 +225,10 @@ func formatAnalysisOutput(output *AnalyzeBuildOutput) string {
 			message = message[:200] + "..."
 		}
 		sb.WriteString(fmt.Sprintf("   Message: %s\n\n", message))
+	}
+
+	if output.HasMore {
+		sb.WriteString(fmt.Sprintf("--- More findings available. Use offset=%d to see next page ---\n", output.Offset+output.Limit))
 	}
 
 	return sb.String()

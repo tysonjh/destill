@@ -58,22 +58,15 @@ Destill is a distributed log triage system for CI/CD pipelines using a distribut
 
 ### 1. Ingest Agent (`destill-ingest`)
 
-**Purpose**: Fetch build logs and JUnit artifacts from CI systems
+**Purpose**: Fetch build logs from CI systems
 
 **Operation**:
 - Consumes: `destill.requests` topic
-- Fetches: Build metadata, job logs, and JUnit XML artifacts from Buildkite API
+- Fetches: Build metadata and job logs from Buildkite API
 - **Log Processing**:
   - Chunks: Logs into ~500KB chunks with 50-line overlap
   - Publishes: `LogChunkV2` to `destill.logs.raw` topic
   - Keying: Uses `buildID` as message key for ordering
-- **JUnit Processing**:
-  - Searches: For `junit*.xml` artifacts in each job
-  - Parses: JUnit XML to extract test failures
-  - Publishes: `TriageCardV2` directly to `destill.analysis.findings` topic
-  - Confidence: 1.0 (test failures are definitive)
-  - Bypasses: Analyze agent (no heuristic analysis needed)
-
 **Stateless**: No cross-request state. Can scale horizontally.
 
 ### 2. Analyze Agent (`destill-analyze`)
@@ -92,50 +85,6 @@ Destill is a distributed log triage system for CI/CD pipelines using a distribut
 - Keying: Uses `requestID` as message key for grouping
 
 **Stateless**: Processes each chunk in isolation. Accepts boundary limitations. Can scale horizontally.
-
-### 2b. JUnit XML Processing (in Ingest Agent)
-
-**Purpose**: Extract definitive test failures from structured JUnit XML data
-
-**Why in Ingest Agent?**
-- JUnit XML is already structured data (not heuristic)
-- Test failures have 1.0 confidence (definitive)
-- No need for pattern matching or analysis
-- Bypasses analyze agent for efficiency
-
-**Operation**:
-- Detection: Identifies `junit*.xml` artifacts from Buildkite
-- Parsing: Uses `encoding/xml` to parse test suites and cases
-- Extraction: Only processes `<failure>` and `<error>` elements
-- Hashing: Uses `class::test::message` for deduplication
-- Metadata: Includes test name, class, suite, duration, stack trace
-- Publishing: Sends to `destill.analysis.findings` (same as log findings)
-
-**Confidence Scoring**: Always 1.0
-- Test failures are ground truth (not heuristic)
-- No false positives (unlike log pattern matching)
-- Sorted to top of TUI automatically
-
-**Example JUnit Finding**:
-```json
-{
-  "id": "req-123-job-456-a1b2c3d4",
-  "message_hash": "a1b2c3d4e5f6...",
-  "source": "junit:test-results/junit.xml",
-  "severity": "error",
-  "raw_message": "[failure] com.example.MyTest.testFoo: expected true but was false",
-  "normalized_message": "com.example.MyTest::testFoo",
-  "confidence_score": 1.0,
-  "post_context": ["at com.example.MyTest.testFoo(MyTest.java:42)", "..."],
-  "metadata": {
-    "source_type": "junit",
-    "test_name": "testFoo",
-    "class_name": "com.example.MyTest",
-    "failure_type": "failure",
-    "duration_sec": "0.123"
-  }
-}
-```
 
 ### 3. Redpanda Connect (Benthos)
 

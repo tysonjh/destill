@@ -30,7 +30,7 @@ type Job struct {
 	Timestamp time.Time
 }
 
-// Artifact represents a build artifact (e.g., JUnit XML)
+// Artifact represents a build artifact
 type Artifact struct {
 	ID          string
 	JobID       string

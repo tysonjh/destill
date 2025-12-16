@@ -49,7 +49,7 @@ type Job struct {
 type Artifact struct {
 	ID          string `json:"id"`
 	JobID       string `json:"job_id"`
-	Path        string `json:"path"` // e.g., "junit.xml" or "test-results/junit.xml"
+	Path        string `json:"path"`
 	DownloadURL string `json:"download_url"`
 	FileSize    int64  `json:"file_size"`
 	Sha1Sum     string `json:"sha1sum"`

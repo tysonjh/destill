@@ -55,8 +55,8 @@ When you analyze a GitHub Actions workflow run, Destill:
 1. **Fetches workflow metadata** - Uses the GitHub API to get the run details
 2. **Retrieves all jobs** - Gets the list of jobs that ran in the workflow
 3. **Downloads job logs** - Fetches logs for each job (GitHub provides logs as text)
-4. **Processes artifacts** - Looks for JUnit XML artifacts and parses test failures
-5. **Analyzes logs** - Runs pattern-based detection to find errors and failures
+4. **Analyzes logs** - Runs pattern-based detection to find errors and failures
+5. **Boosts confidence** - Errors from failed jobs get higher confidence scores
 6. **Displays findings** - Shows results in an interactive TUI, sorted by confidence
 
 ## Differences from Buildkite
@@ -76,7 +76,7 @@ GitHub Actions has some architectural differences compared to Buildkite:
 - ✅ Workflow run metadata (status, conclusion, timestamps)
 - ✅ Job-level details (name, status, conclusion, steps)
 - ✅ Full job logs with pattern-based analysis
-- ✅ JUnit XML artifact parsing (1.0 confidence for test failures)
+- ✅ Failed job detection with confidence boosting
 - ✅ Interactive TUI with findings sorted by confidence
 - ✅ Local mode (no infrastructure required)
 - ✅ Distributed mode (with Redpanda + Postgres)
@@ -120,27 +120,6 @@ export GITHUB_TOKEN="ghp_your_new_token"
 - Use distributed mode to cache results in Postgres
 - Consider using a GitHub App instead of PAT for higher limits
 
-### No JUnit findings
-
-**Problem**: JUnit XML artifacts aren't being detected.
-
-**Solution**:
-
-Ensure your workflow uploads JUnit artifacts:
-
-```yaml
-steps:
-  - name: Run Tests
-    run: make test
-
-  - name: Upload Test Results
-    if: always()
-    uses: actions/upload-artifact@v3
-    with:
-      name: junit-results
-      path: test-results/junit*.xml
-```
-
 ## Example Workflow Configuration
 
 Here's a complete example of a workflow that works well with Destill:
@@ -162,19 +141,7 @@ jobs:
           go-version: '1.21'
 
       - name: Run tests
-        run: |
-          go test -v ./... -coverprofile=coverage.out
-          go test -v ./... -json > test-results.json
-          # Generate JUnit XML (using go-junit-report or similar)
-          go install github.com/jstemmer/go-junit-report/v2@latest
-          go test -v ./... 2>&1 | go-junit-report -set-exit-code > junit.xml
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: junit.xml
+        run: go test -v ./... -coverprofile=coverage.out
 ```
 
 Then analyze with:
@@ -185,11 +152,9 @@ destill analyze "https://github.com/yourusername/yourrepo/actions/runs/123456"
 
 ## Best Practices
 
-1. **Always upload JUnit artifacts** - This gives you definitive test failure findings with 1.0 confidence
-2. **Use `if: always()`** - Ensure artifacts are uploaded even when tests fail
-3. **Descriptive job names** - Makes it easier to identify issues in the TUI
-4. **Structure your logs** - Use clear error messages and structured output
-5. **Keep token secure** - Never commit your GitHub token to source control
+1. **Descriptive job names** - Makes it easier to identify issues in the TUI
+2. **Structure your logs** - Use clear error messages and structured output
+3. **Keep token secure** - Never commit your GitHub token to source control
 
 ## Next Steps
 

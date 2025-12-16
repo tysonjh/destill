@@ -151,7 +151,7 @@ https://buildkite.com/org/pipeline/builds/123
 3. **Destill analyzes the build**:
    - Fetches logs and metadata from the CI platform
    - Chunks logs and runs pattern-based analysis
-   - Parses JUnit XML artifacts for test failures
+   - Boosts confidence for errors from failed jobs
    - Returns findings sorted by confidence score
 4. **Claude receives findings** as structured JSON
 5. **Claude interprets results** and provides insights in natural language
@@ -241,7 +241,6 @@ The Destill MCP server currently provides one tool:
 **Possible reasons**:
 1. Build passed successfully (no errors to find)
 2. Logs don't match error patterns (false negatives)
-3. JUnit artifacts not uploaded or not in expected format
 
 **Debug steps**:
 1. Run the same build URL with CLI to see verbose output:
@@ -249,7 +248,6 @@ The Destill MCP server currently provides one tool:
    ./bin/destill analyze "https://..."
    ```
 2. Check if there are actual errors in the build logs
-3. Verify JUnit XML artifacts are uploaded correctly
 
 ## Security Considerations
 
