@@ -282,6 +282,9 @@ collectLoop:
 		return countI > countJ
 	})
 
+	// Print job summary header to stderr (before JSON output)
+	printJobSummary(cards)
+
 	// Output as JSON
 	output, err := json.MarshalIndent(cards, "", "  ")
 	if err != nil {
@@ -290,6 +293,65 @@ collectLoop:
 
 	fmt.Println(string(output))
 	return nil
+}
+
+// printJobSummary outputs a summary of jobs by status to stderr.
+// This helps users quickly identify which jobs failed without parsing the full JSON.
+func printJobSummary(cards []contracts.TriageCard) {
+	// Track unique jobs and their states
+	type jobInfo struct {
+		name   string
+		state  string
+		status string
+	}
+	jobMap := make(map[string]jobInfo)
+
+	for _, card := range cards {
+		jobName := card.JobName
+		if jobName == "" {
+			continue
+		}
+
+		// Only record each job once (first occurrence)
+		if _, exists := jobMap[jobName]; !exists {
+			state := card.Metadata["job_state"]
+			status := card.Metadata["exit_status"]
+			jobMap[jobName] = jobInfo{name: jobName, state: state, status: status}
+		}
+	}
+
+	if len(jobMap) == 0 {
+		return
+	}
+
+	// Count by state
+	var failedJobs []string
+	var passedJobs []string
+
+	for _, info := range jobMap {
+		if info.state == "failed" || (info.status != "" && info.status != "0") {
+			failedJobs = append(failedJobs, info.name)
+		} else {
+			passedJobs = append(passedJobs, info.name)
+		}
+	}
+
+	// Sort for consistent output
+	sort.Strings(failedJobs)
+	sort.Strings(passedJobs)
+
+	// Print summary
+	fmt.Fprintf(os.Stderr, "\n")
+	fmt.Fprintf(os.Stderr, "Job Summary: %d failed, %d passed\n", len(failedJobs), len(passedJobs))
+
+	if len(failedJobs) > 0 {
+		fmt.Fprintf(os.Stderr, "Failed jobs:\n")
+		for _, name := range failedJobs {
+			fmt.Fprintf(os.Stderr, "  ✗ %s\n", name)
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "\n")
 }
 
 // startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.

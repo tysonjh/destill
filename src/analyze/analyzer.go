@@ -131,10 +131,16 @@ func AnalyzeChunk(chunk contracts.LogChunk) []Finding {
 		return nil
 	}
 
-	// Check if this job failed (exit status != 0)
+	// Check job outcome based on exit status
+	// exit_status "0" = passed, non-zero = failed
 	jobFailed := false
-	if exitStatus, ok := chunk.Metadata["exit_status"]; ok && exitStatus != "0" {
-		jobFailed = true
+	jobPassed := false
+	if exitStatus, ok := chunk.Metadata["exit_status"]; ok {
+		if exitStatus != "0" {
+			jobFailed = true
+		} else {
+			jobPassed = true
+		}
 	}
 
 	var findings []Finding
@@ -158,9 +164,13 @@ func AnalyzeChunk(chunk contracts.LogChunk) []Finding {
 		// Calculate confidence
 		confidence := calculateConfidence(trimmed, severity)
 
-		// Boost confidence for errors from failed jobs
+		// Adjust confidence based on job outcome:
+		// - Boost for failed jobs (errors more likely to be root cause)
+		// - Penalize for passed jobs (errors are likely noise/teardown)
 		if jobFailed {
 			confidence = boostConfidenceForFailedJob(confidence)
+		} else if jobPassed {
+			confidence = penalizeConfidenceForPassedJob(confidence)
 		}
 
 		// Skip low confidence findings
@@ -348,24 +358,46 @@ func calculateConfidence(line string, severity string) float64 {
 // boostConfidenceForFailedJob boosts confidence scores for findings from failed jobs.
 // Errors from failed jobs are much more likely to be the actual root cause than
 // errors from passing jobs (which are often test output or transient issues).
+//
+// Uses an asymptotic "compress toward 1.0" formula that:
+// - Preserves relative ordering (0.9 stays above 0.8 after boosting)
+// - Never actually reaches 1.0 (asymptotic)
+// - Gives bigger boosts to lower confidence scores
+//
+// Formula: boosted = 1 - (1 - base) * shrinkFactor
+// With shrinkFactor=0.4:
+//
+//	0.5 -> 0.70, 0.7 -> 0.82, 0.8 -> 0.88, 0.9 -> 0.94
 func boostConfidenceForFailedJob(baseConfidence float64) float64 {
-	// Apply a multiplicative boost that's stronger for lower confidence scores
-	// This helps surface findings that might otherwise be filtered out
-	boost := 0.25
+	// Shrink the gap to 1.0 by this factor
+	// Lower values = more aggressive boost
+	shrinkFactor := 0.4
 
-	// Don't boost if already very high confidence
-	if baseConfidence >= 0.9 {
-		return baseConfidence
-	}
-
-	boosted := baseConfidence + boost
-
-	// Cap at 1.0
-	if boosted > 1.0 {
-		return 1.0
-	}
+	boosted := 1.0 - (1.0-baseConfidence)*shrinkFactor
 
 	return boosted
+}
+
+// penalizeConfidenceForPassedJob reduces confidence scores for findings from passed jobs.
+// If a job passed despite showing errors, those errors are likely:
+// - Test teardown noise (404s when nodes are already stopped)
+// - Expected errors in error-handling tests (401 Unauthorized in auth tests)
+// - Transient issues that self-resolved
+// - Log output from tests verifying error conditions
+//
+// Uses multiplicative penalty to maintain relative ordering within passed job findings
+// while ensuring they rank below boosted findings from failed jobs.
+//
+// With factor=0.6:
+//
+//	0.9 -> 0.54, 0.8 -> 0.48, 0.7 -> 0.42
+func penalizeConfidenceForPassedJob(baseConfidence float64) float64 {
+	// Multiply by this factor (0.6 = 40% reduction)
+	factor := 0.6
+
+	penalized := baseConfidence * factor
+
+	return penalized
 }
 
 // normalizeMessage normalizes a log message for deduplication.

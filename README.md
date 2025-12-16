@@ -28,9 +28,9 @@ destill analyze "https://buildkite.com/org/pipeline/builds/123"
 destill analyze "https://github.com/owner/repo/actions/runs/456"
 ```
 
-The TUI displays findings sorted by confidence. Errors from failed jobs receive boosted confidence scores.
+The TUI displays findings sorted by confidence. Errors from failed jobs receive boosted confidence scores, while errors from passed jobs receive reduced scores. This ensures actionable findings surface first.
 
-Use `--json` for machine-readable output (e.g. Claude Code or Gemini).
+Use `--json` for machine-readable output (e.g. Claude Code or Gemini). JSON mode prints a job summary to stderr before the findings.
 
 ## Modes
 

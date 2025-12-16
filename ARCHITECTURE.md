@@ -22,7 +22,14 @@ Logs are split into chunks with overlap between them. Chunking keeps message siz
 
 ### Confidence scoring
 
-Findings receive confidence scores based on pattern matching. Errors from failed jobs receive boosted scores. The TUI sorts findings by confidence to surface likely root causes first.
+Findings receive confidence scores (0.0–1.0) based on pattern matching. Boost patterns include stack traces, exit codes, and build tool errors. Penalty patterns include test expectations, handled errors, and success messages.
+
+Job outcome adjusts scores after pattern matching:
+
+- **Failed jobs**: Scores increase asymptotically toward 1.0, preserving relative ordering.
+- **Passed jobs**: Scores decrease proportionally. Errors from passing jobs are often teardown noise or expected test output.
+
+Findings from failed jobs always rank above findings from passed jobs. The TUI sorts by confidence to surface likely root causes first.
 
 ### Message keying
 
