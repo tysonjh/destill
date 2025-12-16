@@ -6,7 +6,10 @@
 // use the tui package which has its own ANSI handling via charmbracelet/x/ansi.
 package sanitize
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var (
 	// ANSI escape codes: \x1b[...m (SGR sequences)
@@ -21,4 +24,12 @@ func StripANSI(s string) string {
 	s = buildkiteTimestamp.ReplaceAllString(s, "")
 	s = ansiPattern.ReplaceAllString(s, "")
 	return s
+}
+
+// Clean applies all sanitization: ANSI codes, Buildkite timestamps, carriage returns.
+func Clean(s string) string {
+	s = StripANSI(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "")
+	return strings.TrimSpace(s)
 }
