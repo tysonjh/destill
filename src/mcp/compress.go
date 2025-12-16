@@ -82,3 +82,30 @@ var whitespacePattern = regexp.MustCompile(`\s+`)
 func normalizeWhitespace(line string) string {
 	return strings.TrimSpace(whitespacePattern.ReplaceAllString(line, " "))
 }
+
+// CompressLine applies all single-line compression techniques.
+// Order matters: timestamps first, then paths, then hashes, then whitespace.
+func CompressLine(line string) string {
+	line = stripTimestamps(line)
+	line = compressPath(line)
+	line = maskHashes(line)
+	line = normalizeWhitespace(line)
+	return line
+}
+
+// CompressContextLines applies compression to a slice of context lines.
+// Applies per-line compression first, then removes common prefix.
+func CompressContextLines(lines []string) []string {
+	if len(lines) == 0 {
+		return lines
+	}
+
+	// Apply per-line compression
+	compressed := make([]string, len(lines))
+	for i, line := range lines {
+		compressed[i] = CompressLine(line)
+	}
+
+	// Remove common prefix across the block
+	return removeCommonPrefix(compressed)
+}

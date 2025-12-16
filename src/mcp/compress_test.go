@@ -253,3 +253,40 @@ func TestNormalizeWhitespace(t *testing.T) {
 		})
 	}
 }
+
+func TestCompressLine(t *testing.T) {
+	input := "2024-05-21T10:00:05.123Z /var/lib/jenkins/workspace/pipeline/src/test/AuthTest.java:45 - Container abc123def456789 failed"
+	expected := ".../AuthTest.java:45 - Container <HASH> failed"
+
+	result := CompressLine(input)
+	if result != expected {
+		t.Errorf("CompressLine() = %q, expected %q", result, expected)
+	}
+}
+
+func TestCompressContextLines(t *testing.T) {
+	lines := []string{
+		"2024-05-21T10:00:01.000Z [INFO] [com.mycompany.runner.Executor] Starting test",
+		"2024-05-21T10:00:02.000Z [INFO] [com.mycompany.runner.Executor] Running test",
+		"2024-05-21T10:00:03.000Z [INFO] [com.mycompany.runner.Executor] Test failed",
+	}
+
+	result := CompressContextLines(lines)
+
+	// Should remove timestamps, find common prefix, normalize whitespace
+	expected := []string{
+		"... Starting test",
+		"... Running test",
+		"... Test failed",
+	}
+
+	if len(result) != len(expected) {
+		t.Fatalf("len = %d, expected %d", len(result), len(expected))
+	}
+
+	for i, line := range result {
+		if line != expected[i] {
+			t.Errorf("line[%d] = %q, expected %q", i, line, expected[i])
+		}
+	}
+}
