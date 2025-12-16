@@ -1,6 +1,9 @@
 package mcp
 
-import "destill-agent/src/contracts"
+import (
+	"destill-agent/src/contracts"
+	"destill-agent/src/sanitize"
+)
 
 // buildJobStateMap creates a map of normalized_msg -> job state.
 // Values are "failed", "passed", or "both".
@@ -39,4 +42,19 @@ func classifyFinding(card contracts.TriageCard, jobStates map[string]string) int
 	// If pattern appears in both -> Tier 3 (common noise)
 	// Tier 2 (frequency spikes) requires historical data - implement later
 	return 3
+}
+
+// convertToFinding converts a TriageCard to an LLM-ready Finding.
+func convertToFinding(card contracts.TriageCard, alsoInPassing bool) Finding {
+	return Finding{
+		Message:           sanitize.Clean(card.RawMessage),
+		Severity:          card.Severity,
+		Confidence:        card.ConfidenceScore,
+		Job:               card.JobName,
+		JobState:          card.Metadata["job_state"],
+		Recurrence:        card.GetRecurrenceCount(),
+		AlsoInPassingJobs: alsoInPassing,
+		PreContext:        sanitize.CleanLines(card.PreContext),
+		PostContext:       sanitize.CleanLines(card.PostContext),
+	}
 }

@@ -74,3 +74,40 @@ func TestClassifyFinding(t *testing.T) {
 		})
 	}
 }
+
+func TestConvertToFinding(t *testing.T) {
+	card := contracts.TriageCard{
+		RawMessage:      "\x1b[31mERROR\x1b[0m: test failed\r",
+		Severity:        "ERROR",
+		ConfidenceScore: 0.95,
+		JobName:         "test-job",
+		PreContext:      []string{"\x1b[32mline1\x1b[0m", "line2"},
+		PostContext:     []string{"line3", "\x1b[33mline4\x1b[0m"},
+		Metadata: map[string]string{
+			"job_state":        "failed",
+			"recurrence_count": "5",
+		},
+	}
+
+	finding := convertToFinding(card, false)
+
+	if finding.Message != "ERROR: test failed" {
+		t.Errorf("Message = %q, expected %q", finding.Message, "ERROR: test failed")
+	}
+	if finding.Recurrence != 5 {
+		t.Errorf("Recurrence = %d, expected %d", finding.Recurrence, 5)
+	}
+	if finding.AlsoInPassingJobs != false {
+		t.Errorf("AlsoInPassingJobs = %v, expected false", finding.AlsoInPassingJobs)
+	}
+	if finding.Job != "test-job" {
+		t.Errorf("Job = %q, expected %q", finding.Job, "test-job")
+	}
+	if finding.Severity != "ERROR" {
+		t.Errorf("Severity = %q, expected %q", finding.Severity, "ERROR")
+	}
+	// Check context was sanitized
+	if len(finding.PreContext) != 2 || finding.PreContext[0] != "line1" {
+		t.Errorf("PreContext not properly sanitized: %v", finding.PreContext)
+	}
+}
