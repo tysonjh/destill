@@ -29,3 +29,45 @@ var longPathPattern = regexp.MustCompile(`/(?:[^/\s]+/){3,}([^/\s:]+(?::\d+)?)`)
 func compressPath(line string) string {
 	return longPathPattern.ReplaceAllString(line, ".../$1")
 }
+
+// minPrefixLength is the minimum prefix length worth removing.
+// Shorter prefixes don't save enough tokens to justify the "..." replacement.
+const minPrefixLength = 20
+
+// findCommonPrefix finds the longest common prefix across lines.
+// Returns empty string if prefix is too short or lines are empty.
+func findCommonPrefix(lines []string) string {
+	if len(lines) < 2 {
+		return ""
+	}
+
+	prefix := lines[0]
+	for _, line := range lines[1:] {
+		for len(prefix) > 0 && (len(line) < len(prefix) || line[:len(prefix)] != prefix) {
+			prefix = prefix[:len(prefix)-1]
+		}
+		if len(prefix) == 0 {
+			break
+		}
+	}
+
+	if len(prefix) < minPrefixLength {
+		return ""
+	}
+
+	return prefix
+}
+
+// removeCommonPrefix replaces common prefix with "... " across lines.
+func removeCommonPrefix(lines []string) []string {
+	prefix := findCommonPrefix(lines)
+	if prefix == "" {
+		return lines
+	}
+
+	result := make([]string, len(lines))
+	for i, line := range lines {
+		result[i] = "... " + line[len(prefix):]
+	}
+	return result
+}

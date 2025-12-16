@@ -130,3 +130,83 @@ func TestCompressPath(t *testing.T) {
 		})
 	}
 }
+
+func TestFindCommonPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		lines    []string
+		expected string
+	}{
+		{
+			name: "Java logger prefix",
+			lines: []string{
+				"[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] Starting",
+				"[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] Pulling",
+				"[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] Failed",
+			},
+			expected: "[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] ",
+		},
+		{
+			name: "no common prefix",
+			lines: []string{
+				"Starting container",
+				"Pulling image",
+				"Container failed",
+			},
+			expected: "",
+		},
+		{
+			name: "short common prefix ignored",
+			lines: []string{
+				"[INFO] Starting",
+				"[INFO] Stopping",
+			},
+			expected: "", // Too short (< 20 chars) to be worth removing
+		},
+		{
+			name:     "empty lines",
+			lines:    []string{},
+			expected: "",
+		},
+		{
+			name:     "single line",
+			lines:    []string{"[INFO] Single line"},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := findCommonPrefix(tt.lines)
+			if result != tt.expected {
+				t.Errorf("findCommonPrefix() = %q, expected %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRemoveCommonPrefix(t *testing.T) {
+	lines := []string{
+		"[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] Starting container",
+		"[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] Pulling image",
+		"[INFO] [com.mycompany.infrastructure.runner.DockerExecutor] Container failed",
+	}
+
+	result := removeCommonPrefix(lines)
+
+	expected := []string{
+		"... Starting container",
+		"... Pulling image",
+		"... Container failed",
+	}
+
+	if len(result) != len(expected) {
+		t.Fatalf("len = %d, expected %d", len(result), len(expected))
+	}
+
+	for i, line := range result {
+		if line != expected[i] {
+			t.Errorf("line[%d] = %q, expected %q", i, line, expected[i])
+		}
+	}
+}
