@@ -20,6 +20,7 @@ type BuildInfo struct {
 
 // Finding is a sanitized, LLM-ready error finding.
 type Finding struct {
+	ID                string   `json:"id"` // MessageHash - stable identifier for drill-down
 	Message           string   `json:"message"`
 	Severity          string   `json:"severity"`
 	Confidence        float64  `json:"confidence"`
@@ -36,4 +37,25 @@ type Finding struct {
 
 	// Tier 3 specific
 	PassingJobCount int `json:"passing_job_count,omitempty"`
+}
+
+// FindingSummary is a lightweight finding for the manifest response.
+// Contains just enough info for Claude to decide which findings to drill into.
+type FindingSummary struct {
+	ID         string  `json:"id"`
+	Tier       int     `json:"tier"`
+	Message    string  `json:"message"`    // Truncated to ~100 chars
+	Severity   string  `json:"severity"`
+	Confidence float64 `json:"confidence"`
+	Job        string  `json:"job"`
+}
+
+// ManifestResponse is the response from analyze_build.
+// Tier 1 findings are fully expanded (they're the likely root causes).
+// Tier 2-3 findings are summarized for optional drill-down.
+type ManifestResponse struct {
+	RequestID     string           `json:"request_id"`
+	Build         BuildInfo        `json:"build"`
+	Tier1Findings []Finding        `json:"tier_1_findings"`
+	OtherFindings []FindingSummary `json:"other_findings"`
 }
