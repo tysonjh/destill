@@ -20,6 +20,7 @@ import (
 // Server is the MCP server for destill.
 type Server struct {
 	mcpServer *server.MCPServer
+	store     FindingsStore
 }
 
 // NewServer creates a new MCP server.
@@ -30,7 +31,10 @@ func NewServer() *Server {
 		server.WithToolCapabilities(true),
 	)
 
-	srv := &Server{mcpServer: s}
+	srv := &Server{
+		mcpServer: s,
+		store:     NewInMemoryStore(),
+	}
 	srv.registerTools()
 
 	return srv
@@ -39,7 +43,7 @@ func NewServer() *Server {
 // registerTools registers all available tools.
 func (s *Server) registerTools() {
 	analyzeTool := mcp.NewTool("analyze_build",
-		mcp.WithDescription("Analyze a CI/CD build and return findings tiered by likelihood of being the root cause"),
+		mcp.WithDescription("Analyze a CI/CD build and return tiered findings. Returns all tier 1 findings (unique failures) fully expanded with context - these are the likely root causes. Tier 2-3 findings are summarized; use get_finding_details to drill into them if needed."),
 		mcp.WithString("url",
 			mcp.Required(),
 			mcp.Description("Build URL (Buildkite or GitHub Actions)"),
@@ -49,7 +53,20 @@ func (s *Server) registerTools() {
 		),
 	)
 
+	detailsTool := mcp.NewTool("get_finding_details",
+		mcp.WithDescription("Get full details for a specific finding, including context lines. Use after analyze_build to drill into findings."),
+		mcp.WithString("request_id",
+			mcp.Required(),
+			mcp.Description("Request ID from analyze_build response"),
+		),
+		mcp.WithString("finding_id",
+			mcp.Required(),
+			mcp.Description("Finding ID (message_hash) from the manifest"),
+		),
+	)
+
 	s.mcpServer.AddTool(analyzeTool, s.handleAnalyzeBuild)
+	s.mcpServer.AddTool(detailsTool, s.handleGetFindingDetails)
 }
 
 // Run starts the MCP server on stdio.
@@ -58,6 +75,7 @@ func (s *Server) Run() error {
 }
 
 // handleAnalyzeBuild handles the analyze_build tool call.
+// Returns a lightweight manifest; use get_finding_details for full context.
 func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	// Extract parameters
 	url := request.GetString("url", "")
@@ -73,14 +91,52 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError(fmt.Sprintf("analysis failed: %v", err)), nil
 	}
 
+	// Extract request ID from cards
+	requestID := ExtractRequestID(cards)
+	if requestID == "" {
+		requestID = generateRequestID()
+	}
+
 	// Tier the findings
 	response := TierFindings(cards, limit)
 	response.Build = buildInfo
 
-	// Marshal to JSON
-	jsonBytes, err := json.Marshal(response)
+	// Store full findings for drill-down
+	s.store.Store(requestID, response)
+
+	// Return lightweight manifest
+	manifest := ToManifest(requestID, response)
+	jsonBytes, err := json.Marshal(manifest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal response: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
+}
+
+// handleGetFindingDetails handles the get_finding_details tool call.
+// Returns full finding with context lines for a specific finding ID.
+func (s *Server) handleGetFindingDetails(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	requestID := request.GetString("request_id", "")
+	if requestID == "" {
+		return mcp.NewToolResultError("request_id parameter is required"), nil
+	}
+
+	findingID := request.GetString("finding_id", "")
+	if findingID == "" {
+		return mcp.NewToolResultError("finding_id parameter is required"), nil
+	}
+
+	// Look up the finding
+	finding, found := s.store.Get(requestID, findingID)
+	if !found {
+		return mcp.NewToolResultError(fmt.Sprintf("finding not found: request_id=%s, finding_id=%s", requestID, findingID)), nil
+	}
+
+	// Return full finding with context
+	jsonBytes, err := json.Marshal(finding)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal finding: %v", err)), nil
 	}
 
 	return mcp.NewToolResultText(string(jsonBytes)), nil
@@ -100,7 +156,9 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	pipelineCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	pipeline.Start(msgBroker, pipelineCtx)
+	if err := pipeline.Start(msgBroker, pipelineCtx); err != nil {
+		return nil, BuildInfo{}, fmt.Errorf("failed to start pipeline: %w", err)
+	}
 
 	// Submit analysis request
 	requestID := generateRequestID()
