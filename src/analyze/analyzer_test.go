@@ -53,6 +53,125 @@ func TestCalculateConfidence(t *testing.T) {
 	}
 }
 
+func TestCalculateConfidence_BoostPatterns(t *testing.T) {
+	// Test that high-signal patterns get boosted confidence
+	tests := []struct {
+		name     string
+		line     string
+		severity string
+		minScore float64
+	}{
+		// Stack traces
+		{"Java stack trace", "	at com.example.MyClass.method(MyClass.java:42)", "ERROR", 0.75},
+		{"Python traceback", "Traceback (most recent call last):", "ERROR", 0.75},
+		{"Python file line", `  File "/app/main.py", line 42, in func`, "ERROR", 0.75},
+		{"Go panic", "panic: runtime error: invalid memory address", "FATAL", 0.85},
+		{"C++ backtrace", "Backtrace:", "ERROR", 0.75},
+		{"C++ stack frame", "#0  0x00007f3c in myfunction", "ERROR", 0.75},
+		{"C++ terminate", "terminate called after throwing", "ERROR", 0.75},
+
+		// Build tool errors
+		{"npm error", "npm ERR! code ENOENT", "ERROR", 0.80},
+		{"npm ELIFECYCLE", "ERROR: ELIFECYCLE exit code 1", "ERROR", 0.75},
+		{"Maven failure", "[ERROR] BUILD FAILURE", "ERROR", 0.80},
+		{"Gradle failure", "FAILURE: Build failed with an exception", "ERROR", 0.80},
+
+		// Docker/K8s
+		{"Docker error", "Error response from daemon: pull access denied", "ERROR", 0.75},
+		{"K8s CrashLoop", "ERROR: CrashLoopBackOff for pod nginx", "ERROR", 0.80},
+		{"K8s OOMKilled", "ERROR: Container killed OOMKilled", "ERROR", 0.80},
+
+		// Crashes
+		{"OOM", "ERROR: OutOfMemoryError: Java heap space", "ERROR", 0.85},
+		{"Segfault", "ERROR: Segmentation fault (core dumped)", "ERROR", 0.85},
+		{"SIGKILL", "Process killed by SIGKILL", "ERROR", 0.85},
+
+		// Exit codes
+		{"Exit code", "ERROR: Process exited with code 1", "ERROR", 0.75},
+		{"Non-zero exit", "FATAL: non-zero exit code returned", "FATAL", 0.85},
+
+		// Compilation
+		{"Compile error", "ERROR: cannot find symbol: class Foo", "ERROR", 0.75},
+		{"Syntax error", "SyntaxError: unexpected token '<'", "ERROR", 0.70},
+		{"Import error", "ModuleNotFoundError: No module named 'foo'", "ERROR", 0.70},
+
+		// Other high-signal
+		{"Permission denied", "ERROR: Permission denied accessing /etc/passwd", "ERROR", 0.70},
+		{"Connection refused", "ERROR: Connection refused to localhost:5432", "ERROR", 0.70},
+		{"Timeout", "ERROR: Operation timed out after 30s", "ERROR", 0.70},
+		{"Assertion", "AssertionError: expected true but got false", "ERROR", 0.80},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := calculateConfidence(tt.line, tt.severity)
+			if score < tt.minScore {
+				t.Errorf("calculateConfidence(%q) = %.2f, expected >= %.2f (should be boosted)",
+					tt.line, score, tt.minScore)
+			}
+		})
+	}
+}
+
+func TestCalculateConfidence_PenaltyPatterns(t *testing.T) {
+	// Test that false-positive patterns get penalized
+	tests := []struct {
+		name     string
+		line     string
+		severity string
+		maxScore float64
+	}{
+		// Success messages with "error" word
+		{"Zero errors", "Build completed with 0 errors", "ERROR", 0.30},
+		{"No errors", "Compilation finished: no errors found", "ERROR", 0.30},
+		{"Errors: 0", "Test results: errors: 0, warnings: 2", "ERROR", 0.30},
+
+		// Test expectations
+		{"Expect error", "expect(fn).toThrow(Error)", "ERROR", 0.40},
+		{"Should fail", "it should.fail when given invalid input", "ERROR", 0.40},
+		{"Assert throws", "assert.throws(() => fn(), Error)", "ERROR", 0.45},
+
+		// Handled errors
+		{"Caught error", "ERROR caught and handled gracefully", "ERROR", 0.45},
+		{"Recovered", "ERROR recovered from panic successfully", "ERROR", 0.45},
+
+		// Variable names
+		{"errorHandler", "const errorHandler = new ErrorHandler()", "ERROR", 0.50},
+		{"getError", "result.getError() returned null", "ERROR", 0.50},
+		{"isError", "if (response.isError()) return", "ERROR", 0.50},
+
+		// Retry success
+		{"Succeeded after retry", "Operation succeeded after retry attempt 3", "ERROR", 0.40},
+		{"Passed on retry", "Test passed on retry", "ERROR", 0.40},
+
+		// Comments
+		{"Code comment", "// ERROR: This should never happen", "ERROR", 0.60},
+		{"Hash comment", "# ERROR handling code below", "ERROR", 0.45},
+
+		// Quoted levels (format strings)
+		{"Quoted ERROR", `log.SetLevel("ERROR")`, "ERROR", 0.45},
+		{"Quoted FATAL", `logger.level = 'FATAL'`, "FATAL", 0.55},
+
+		// Help text
+		{"Usage text", "Usage: command [OPTIONS] ERROR_FILE", "ERROR", 0.50},
+		{"Documentation", "See documentation for error handling", "ERROR", 0.50},
+
+		// Combined penalties
+		{"Test passed", "All 42 tests passed, 0 errors", "ERROR", 0.15},
+		{"Deprecated", "WARN: deprecated function 'oldMethod'", "WARN", 0.30},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			score := calculateConfidence(tt.line, tt.severity)
+			if score > tt.maxScore {
+				t.Errorf("calculateConfidence(%q) = %.2f, expected <= %.2f (should be penalized)",
+					tt.line, score, tt.maxScore)
+			}
+		})
+	}
+}
+
 func TestNormalizeMessage(t *testing.T) {
 	tests := []struct {
 		input    string

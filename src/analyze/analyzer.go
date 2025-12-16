@@ -25,7 +25,7 @@ var (
 	errorPattern   = regexp.MustCompile(`(?i)\b(ERROR|ERR|EXCEPTION|FAILURE|FAILED)\b`)
 	warningPattern = regexp.MustCompile(`(?i)\b(WARN|WARNING)\b`)
 
-	// Normalization patterns (similar to existing analyzer)
+	// Normalization patterns
 	timestampPattern = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
 	uuidPattern      = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	hexPattern       = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
@@ -33,6 +33,81 @@ var (
 
 	// High confidence indicators
 	highConfidencePattern = regexp.MustCompile(`(?i)^.{0,50}\b(FATAL|ERROR|EXCEPTION|CRITICAL)\s*[\[:]`)
+
+	// === BOOST PATTERNS (high signal) ===
+
+	// Stack traces
+	stackTraceJava   = regexp.MustCompile(`^\s+at\s+[\w.$]+\(`)                            // Java/Kotlin/Scala
+	stackTracePython = regexp.MustCompile(`(?i)^Traceback \(most recent call`)            // Python
+	pythonFileLine   = regexp.MustCompile(`^\s*File ".*", line \d+`)                       // Python file:line
+	panicGo          = regexp.MustCompile(`^panic:`)                                       // Go panic
+	stackTraceCpp    = regexp.MustCompile(`(?i)^(Backtrace:|Stack trace:|#\d+\s+0x[0-9a-f]+)`) // C/C++
+	terminateCpp     = regexp.MustCompile(`(?i)^terminate called`)                         // C++ terminate
+
+	// Exit/return codes
+	exitCodePattern = regexp.MustCompile(`(?i)(exit(ed)?|return(ed)?|status).{0,20}(code|status)?\s*[:\s]+[1-9]\d*`)
+	nonZeroExit     = regexp.MustCompile(`(?i)(non-?zero|failed|failure).{0,15}(exit|return|code)`)
+
+	// Build tool specific - npm
+	npmError = regexp.MustCompile(`^npm ERR!`)
+	npmCodes = regexp.MustCompile(`\b(ENOENT|EACCES|ELIFECYCLE|ECONNREFUSED|ECONNRESET|E404|ERESOLVE)\b`)
+
+	// Build tool specific - Maven/Gradle
+	mavenFailure  = regexp.MustCompile(`^\[ERROR\]|BUILD FAILURE`)
+	gradleFailure = regexp.MustCompile(`^FAILURE:|BUILD FAILED`)
+
+	// Build tool specific - Docker
+	dockerError = regexp.MustCompile(`(?i)(Error response from daemon|error during connect|Cannot connect to the Docker)`)
+
+	// Kubernetes errors
+	k8sErrors = regexp.MustCompile(`\b(ErrImagePull|ImagePullBackOff|CrashLoopBackOff|OOMKilled|NodeNotReady|RunContainerError)\b`)
+
+	// Crashes & resource issues
+	oomPattern     = regexp.MustCompile(`(?i)(OutOfMemory|out of memory|OOM|Cannot allocate memory|heap space|memory exhausted)`)
+	segfaultPattern = regexp.MustCompile(`(?i)(Segmentation fault|SIGSEGV|SIGKILL|SIGABRT|core dumped|Aborted)`)
+	timeoutPattern = regexp.MustCompile(`(?i)(timed?\s*out|deadline exceeded|context canceled|context deadline|ETIMEDOUT)`)
+
+	// Compilation/import errors
+	compileError = regexp.MustCompile(`(?i)(cannot find symbol|undefined reference|does not exist|not found|unresolved|linker error)`)
+	importError  = regexp.MustCompile(`(?i)(ModuleNotFoundError|cannot find module|No module named|import.*failed|could not resolve)`)
+	syntaxError  = regexp.MustCompile(`(?i)(SyntaxError|unexpected token|parse error|invalid syntax|unexpected end)`)
+
+	// Permission/auth errors
+	permissionError = regexp.MustCompile(`(?i)(Permission denied|Access denied|Unauthorized|403 Forbidden|401 Unauthorized|EACCES)`)
+
+	// Connection failures
+	connectionError = regexp.MustCompile(`(?i)(Connection refused|Connection reset|ECONNREFUSED|ECONNRESET|network unreachable|host unreachable)`)
+
+	// Assertion failures
+	assertionError = regexp.MustCompile(`(?i)(assertion failed|AssertionError|assert.*failed|ASSERT)`)
+
+	// === PENALTY PATTERNS (false positives) ===
+
+	// Success messages containing "error" word
+	zeroErrorsPattern = regexp.MustCompile(`(?i)(^|[^\d])0 errors?\b|no errors?\b|errors?:\s*0\b`)
+
+	// Test expectations (testing for errors, not actual errors)
+	// Be careful not to match "expected X but got Y" which is an actual assertion failure message
+	testExpectPattern = regexp.MustCompile(`(?i)(expect|should|assert|must)\s*[\.(].{0,20}(error|throw|fail|reject)`)
+
+	// Caught/handled errors
+	handledErrorPattern = regexp.MustCompile(`(?i)(caught|rescued|handled|recovered|catching|recovery|graceful)`)
+
+	// Error in variable/function names (but not actual Error types like SyntaxError, TypeError, etc.)
+	// Use word boundaries to avoid matching substrings like "AssertionError" containing "onError"
+	errorVarPattern = regexp.MustCompile(`(error[A-Z_]|_error_|error_|\.error\(|\bgetError\b|\bsetError\b|\bisError\b|\bhasError\b|\blastError\b|\bonError\b|\bhandleError\b)`)
+
+	// Success after retry
+	retrySuccessPattern = regexp.MustCompile(`(?i)(succeeded|passed|success|ok).{0,20}(retry|attempt|retrying)`)
+
+	// Comments
+	commentPattern = regexp.MustCompile(`^\s*(//|#\s|/\*|\*\s|<!--)`)
+
+	// Log level in quotes (part of format string, not actual error)
+	quotedLevelPattern = regexp.MustCompile(`["'](ERROR|FATAL|WARN)["']`)
+
+	// Documentation/help text
+	helpTextPattern = regexp.MustCompile(`(?i)(usage:|--help|example:|see also:|documentation)`)
 )
 
 // Finding represents an error found in a log chunk.
@@ -133,10 +208,13 @@ func detectSeverity(line string) string {
 // calculateConfidence calculates a confidence score for a finding.
 func calculateConfidence(line string, severity string) float64 {
 	score := 0.5 // Base score
+	lower := strings.ToLower(line)
 
-	// High confidence indicators
+	// === BOOSTS ===
+
+	// High confidence indicators (structured log prefix)
 	if highConfidencePattern.MatchString(line) {
-		score += 0.3
+		score += 0.25
 	}
 
 	// Severity boost
@@ -146,16 +224,114 @@ func calculateConfidence(line string, severity string) float64 {
 		score += 0.1
 	}
 
-	// Penalty for common false positives
-	lower := strings.ToLower(line)
+	// Stack traces (very high signal)
+	if stackTraceJava.MatchString(line) || stackTracePython.MatchString(line) ||
+		pythonFileLine.MatchString(line) || panicGo.MatchString(line) ||
+		stackTraceCpp.MatchString(line) || terminateCpp.MatchString(line) {
+		score += 0.30
+	}
+
+	// Build tool errors (definitive)
+	if npmError.MatchString(line) || npmCodes.MatchString(line) ||
+		mavenFailure.MatchString(line) || gradleFailure.MatchString(line) {
+		score += 0.30
+	}
+
+	// Docker/K8s errors
+	if dockerError.MatchString(line) || k8sErrors.MatchString(line) {
+		score += 0.30
+	}
+
+	// Crashes and resource issues (very high signal)
+	if oomPattern.MatchString(line) || segfaultPattern.MatchString(line) {
+		score += 0.35
+	}
+
+	// Timeout errors
+	if timeoutPattern.MatchString(line) {
+		score += 0.20
+	}
+
+	// Exit code failures
+	if exitCodePattern.MatchString(line) || nonZeroExit.MatchString(line) {
+		score += 0.25
+	}
+
+	// Compilation/syntax/import errors
+	if compileError.MatchString(line) || syntaxError.MatchString(line) || importError.MatchString(line) {
+		score += 0.25
+	}
+
+	// Permission/auth errors
+	if permissionError.MatchString(line) {
+		score += 0.20
+	}
+
+	// Connection failures
+	if connectionError.MatchString(line) {
+		score += 0.20
+	}
+
+	// Assertion failures
+	if assertionError.MatchString(line) {
+		score += 0.25
+	}
+
+	// === PENALTIES ===
+
+	// "0 errors" or "no errors" - success message (heavy penalty)
+	if zeroErrorsPattern.MatchString(line) {
+		score -= 0.50
+	}
+
+	// Test expectations (testing for errors, not actual errors)
+	if testExpectPattern.MatchString(line) {
+		score -= 0.40
+	}
+
+	// Caught/handled errors
+	if handledErrorPattern.MatchString(line) {
+		score -= 0.30
+	}
+
+	// Error in variable/function names
+	if errorVarPattern.MatchString(line) {
+		score -= 0.25
+	}
+
+	// Success after retry
+	if retrySuccessPattern.MatchString(line) {
+		score -= 0.40
+	}
+
+	// Comments
+	if commentPattern.MatchString(line) {
+		score -= 0.30
+	}
+
+	// Quoted log levels (format strings, not actual errors)
+	if quotedLevelPattern.MatchString(line) {
+		score -= 0.30
+	}
+
+	// Help/documentation text
+	if helpTextPattern.MatchString(line) {
+		score -= 0.25
+	}
+
+	// Test passed messages
 	if strings.Contains(lower, "test") && strings.Contains(lower, "passed") {
-		score -= 0.3
+		score -= 0.30
 	}
+
+	// Deprecation warnings (usually not actionable)
 	if strings.Contains(lower, "deprecated") || strings.Contains(lower, "deprecation") {
-		score -= 0.2
+		score -= 0.20
 	}
-	if strings.Contains(lower, "retry") {
-		score -= 0.1
+
+	// Retry without failure context (might be transient)
+	if strings.Contains(lower, "retry") && !strings.Contains(lower, "failed") && !strings.Contains(lower, "error") {
+		score -= 0.15
 	}
 
 	// Cap between 0 and 1
