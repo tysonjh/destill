@@ -111,3 +111,47 @@ func TestConvertToFinding(t *testing.T) {
 		t.Errorf("PreContext not properly sanitized: %v", finding.PreContext)
 	}
 }
+
+func TestTierFindings(t *testing.T) {
+	cards := []contracts.TriageCard{
+		// Unique to failed (tier 1)
+		{
+			NormalizedMsg:   "unique-error",
+			RawMessage:      "unique error message",
+			ConfidenceScore: 0.95,
+			Severity:        "ERROR",
+			JobName:         "job-1",
+			Metadata:        map[string]string{"job_state": "failed"},
+		},
+		// Appears in both (tier 3)
+		{
+			NormalizedMsg:   "common-error",
+			RawMessage:      "common error message",
+			ConfidenceScore: 0.85,
+			Severity:        "ERROR",
+			JobName:         "job-1",
+			Metadata:        map[string]string{"job_state": "failed"},
+		},
+		{
+			NormalizedMsg:   "common-error",
+			RawMessage:      "common error message",
+			ConfidenceScore: 0.6,
+			Severity:        "ERROR",
+			JobName:         "job-2",
+			Metadata:        map[string]string{"job_state": "passed"},
+		},
+	}
+
+	result := TierFindings(cards, 10)
+
+	if len(result.Tier1UniqueFailures) != 1 {
+		t.Errorf("Tier1 count = %d, expected 1", len(result.Tier1UniqueFailures))
+	}
+	if len(result.Tier3CommonNoise) != 1 {
+		t.Errorf("Tier3 count = %d, expected 1", len(result.Tier3CommonNoise))
+	}
+	// Tier 3 should have passing job count
+	if len(result.Tier3CommonNoise) > 0 && result.Tier3CommonNoise[0].PassingJobCount != 1 {
+		t.Errorf("PassingJobCount = %d, expected 1", result.Tier3CommonNoise[0].PassingJobCount)
+	}
+}
