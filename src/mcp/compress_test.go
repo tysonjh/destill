@@ -44,3 +44,46 @@ func TestStripTimestamps(t *testing.T) {
 		})
 	}
 }
+
+func TestMaskHashes(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "container ID",
+			input:    "Container abc123def456789 failed to start",
+			expected: "Container <HASH> failed to start",
+		},
+		{
+			name:     "git SHA",
+			input:    "Commit 1a2b3c4d5e6f7890abcdef1234567890abcdef12 broke tests",
+			expected: "Commit <HASH> broke tests",
+		},
+		{
+			name:     "multiple hashes",
+			input:    "Image abc123def456789:latest on host def456abc789012",
+			expected: "Image <HASH>:latest on host <HASH>",
+		},
+		{
+			name:     "short hex preserved",
+			input:    "Error code 0x1234 returned",
+			expected: "Error code 0x1234 returned",
+		},
+		{
+			name:     "no hashes",
+			input:    "Connection failed to server",
+			expected: "Connection failed to server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := maskHashes(tt.input)
+			if result != tt.expected {
+				t.Errorf("maskHashes(%q) = %q, expected %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

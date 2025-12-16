@@ -12,3 +12,11 @@ var timestampPattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{
 func stripTimestamps(line string) string {
 	return timestampPattern.ReplaceAllString(line, "")
 }
+
+// hashPattern matches hex strings of 12+ characters (container IDs, git SHAs, etc.)
+var hashPattern = regexp.MustCompile(`\b[a-f0-9]{12,}\b`)
+
+// maskHashes replaces long hex strings with <HASH>.
+func maskHashes(line string) string {
+	return hashPattern.ReplaceAllString(line, "<HASH>")
+}
