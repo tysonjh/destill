@@ -210,3 +210,46 @@ func TestRemoveCommonPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeWhitespace(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "multiple spaces",
+			input:    "Error    in     module",
+			expected: "Error in module",
+		},
+		{
+			name:     "tabs to spaces",
+			input:    "Error\tin\tmodule",
+			expected: "Error in module",
+		},
+		{
+			name:     "leading/trailing spaces",
+			input:    "   Error in module   ",
+			expected: "Error in module",
+		},
+		{
+			name:     "mixed whitespace",
+			input:    "  Error  \t  in \t module  ",
+			expected: "Error in module",
+		},
+		{
+			name:     "already normalized",
+			input:    "Error in module",
+			expected: "Error in module",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeWhitespace(tt.input)
+			if result != tt.expected {
+				t.Errorf("normalizeWhitespace(%q) = %q, expected %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

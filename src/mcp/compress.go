@@ -1,6 +1,9 @@
 package mcp
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // timestampPattern matches leading timestamps in various formats:
 // - 2024-05-21T10:00:05.123Z
@@ -70,4 +73,12 @@ func removeCommonPrefix(lines []string) []string {
 		result[i] = "... " + line[len(prefix):]
 	}
 	return result
+}
+
+// whitespacePattern matches multiple consecutive whitespace characters.
+var whitespacePattern = regexp.MustCompile(`\s+`)
+
+// normalizeWhitespace collapses multiple spaces/tabs and trims.
+func normalizeWhitespace(line string) string {
+	return strings.TrimSpace(whitespacePattern.ReplaceAllString(line, " "))
 }
