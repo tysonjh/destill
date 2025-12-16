@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"destill-agent/src/contracts"
+	"destill-agent/src/patterns"
 )
 
 const (
@@ -24,12 +25,6 @@ var (
 	fatalPattern   = regexp.MustCompile(`(?i)\b(FATAL|PANIC|CRITICAL)\b`)
 	errorPattern   = regexp.MustCompile(`(?i)\b(ERROR|ERR|EXCEPTION|FAILURE|FAILED)\b`)
 	warningPattern = regexp.MustCompile(`(?i)\b(WARN|WARNING)\b`)
-
-	// Normalization patterns
-	timestampPattern = regexp.MustCompile(`\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})?`)
-	uuidPattern      = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
-	hexPattern       = regexp.MustCompile(`\b0x[0-9a-fA-F]+\b`)
-	numberPattern    = regexp.MustCompile(`\b\d+\b`)
 
 	// High confidence indicators
 	highConfidencePattern = regexp.MustCompile(`(?i)^.{0,50}\b(FATAL|ERROR|EXCEPTION|CRITICAL)\s*[\[:]`)
@@ -401,22 +396,9 @@ func penalizeConfidenceForPassedJob(baseConfidence float64) float64 {
 }
 
 // normalizeMessage normalizes a log message for deduplication.
+// Uses the unified patterns package with MaskRecurrence level for grouping.
 func normalizeMessage(msg string) string {
-	normalized := msg
-
-	// Replace timestamps
-	normalized = timestampPattern.ReplaceAllString(normalized, "[TIMESTAMP]")
-
-	// Replace UUIDs
-	normalized = uuidPattern.ReplaceAllString(normalized, "[UUID]")
-
-	// Replace hex addresses
-	normalized = hexPattern.ReplaceAllString(normalized, "[HEX]")
-
-	// Replace numbers (but keep error codes intact)
-	normalized = numberPattern.ReplaceAllString(normalized, "[NUM]")
-
-	return strings.TrimSpace(normalized)
+	return patterns.Normalize(msg, patterns.MaskRecurrence)
 }
 
 // extractContext extracts surrounding lines from within the chunk.
