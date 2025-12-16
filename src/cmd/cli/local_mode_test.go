@@ -297,7 +297,10 @@ func TestSortCardsByPriority(t *testing.T) {
 // TestLocalMode tests the LocalMode type
 func TestLocalMode(t *testing.T) {
 	t.Run("NewLocalMode creates valid instance", func(t *testing.T) {
-		mode := NewLocalMode()
+		mode, err := NewLocalMode()
+		if err != nil {
+			t.Fatalf("NewLocalMode() unexpected error: %v", err)
+		}
 		defer mode.Close()
 
 		// Broker should be accessible
@@ -307,7 +310,10 @@ func TestLocalMode(t *testing.T) {
 	})
 
 	t.Run("SubmitAnalysis returns valid request ID", func(t *testing.T) {
-		mode := NewLocalMode()
+		mode, err := NewLocalMode()
+		if err != nil {
+			t.Fatalf("NewLocalMode() unexpected error: %v", err)
+		}
 		defer mode.Close()
 
 		buildURL := "https://buildkite.com/myorg/pipeline/builds/123"
@@ -326,7 +332,10 @@ func TestLocalMode(t *testing.T) {
 	})
 
 	t.Run("Close does not panic", func(t *testing.T) {
-		mode := NewLocalMode()
+		mode, err := NewLocalMode()
+		if err != nil {
+			t.Fatalf("NewLocalMode() unexpected error: %v", err)
+		}
 		mode.Close()
 		// Calling Close twice should not panic
 		mode.Close()

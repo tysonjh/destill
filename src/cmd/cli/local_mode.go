@@ -12,6 +12,7 @@ import (
 
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
+	"destill-agent/src/pipeline"
 	"destill-agent/src/provider"
 	"destill-agent/src/tui"
 )
@@ -38,18 +39,24 @@ type LocalMode struct {
 
 // NewLocalMode creates and initializes a new local mode instance.
 // Agents are started immediately and begin listening for requests.
-func NewLocalMode() *LocalMode {
+// Returns error if pipeline initialization fails.
+func NewLocalMode() (*LocalMode, error) {
 	msgBroker := broker.NewInMemoryBroker()
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Start ingest and analyze agents as goroutines
-	startStreamPipeline(msgBroker, ctx)
+	// Start ingest and analyze agents as goroutines.
+	// Subscriptions happen synchronously to avoid race conditions.
+	if err := pipeline.Start(msgBroker, ctx); err != nil {
+		cancel()
+		msgBroker.Close()
+		return nil, fmt.Errorf("failed to start pipeline: %w", err)
+	}
 
 	return &LocalMode{
 		broker: msgBroker,
 		ctx:    ctx,
 		cancel: cancel,
-	}
+	}, nil
 }
 
 // SubmitAnalysis publishes an analysis request to the broker.

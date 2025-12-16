@@ -41,6 +41,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to subscribe to %s: %w", contracts.TopicRequests, err)
 	}
 
+	return a.RunWithChannel(ctx, msgChan)
+}
+
+// RunWithChannel runs the agent's processing loop using a pre-subscribed channel.
+// This allows the caller to control subscription timing to avoid race conditions.
+func (a *Agent) RunWithChannel(ctx context.Context, msgChan <-chan broker.Message) error {
 	a.logger.Info("[IngestAgent] Listening for requests on '%s' topic...", contracts.TopicRequests)
 
 	// Process messages

@@ -13,11 +13,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"destill-agent/src/analyze"
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
-	"destill-agent/src/ingest"
-	"destill-agent/src/logger"
+	"destill-agent/src/mcp"
 	"destill-agent/src/provider"
 	"destill-agent/src/store"
 	"destill-agent/src/tui"
@@ -168,7 +166,11 @@ Examples:
 		}
 
 		// 1. Setup: Create local mode infrastructure
-		mode := NewLocalMode()
+		mode, err := NewLocalMode()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to initialize: %v\n", err)
+			os.Exit(1)
+		}
 		defer mode.Close()
 
 		// 2. Submit: Publish analysis request
@@ -342,30 +344,38 @@ func printJobSummary(cards []contracts.TriageCard) {
 	fmt.Fprintf(os.Stderr, "\n")
 }
 
-// startStreamPipeline launches the Ingestion and Analysis agents as persistent Go routines.
-// The agents run indefinitely until the broker is closed.
-// Uses silent logger to prevent log output from interfering with TUI display.
-func startStreamPipeline(msgBroker broker.Broker, agentCtx context.Context) {
-	// Use silent logger to prevent log pollution in TUI mode
-	log := logger.NewSilentLogger()
+// mcpServerCmd starts the MCP server for LLM integration.
+var mcpServerCmd = &cobra.Command{
+	Use:   "mcp-server",
+	Short: "Start MCP server for LLM integration",
+	Long: `Starts the destill MCP (Model Context Protocol) server.
 
-	// Start Ingestion Agent as a persistent goroutine
-	ingestionAgent := ingest.NewAgent(msgBroker, log)
-	go func() {
-		if err := ingestionAgent.Run(agentCtx); err != nil && err != context.Canceled {
-			// Error logging always goes to stderr even in silent mode
-			fmt.Fprintf(os.Stderr, "[Pipeline] Ingestion agent error: %v\n", err)
-		}
-	}()
+The MCP server exposes destill's analysis capabilities as tools that can be
+invoked by LLMs and coding assistants. It communicates over stdio.
 
-	// Start Analysis Agent as a persistent goroutine
-	analysisAgent := analyze.NewAgent(msgBroker, log)
-	go func() {
-		if err := analysisAgent.Run(agentCtx); err != nil && err != context.Canceled {
-			// Error logging always goes to stderr even in silent mode
-			fmt.Fprintf(os.Stderr, "[Pipeline] Analysis agent error: %v\n", err)
+Available tools:
+  analyze_build - Analyze a CI/CD build and return tiered findings
+
+Example MCP config for Claude Desktop:
+  {
+    "mcpServers": {
+      "destill": {
+        "command": "destill",
+        "args": ["mcp-server"]
+      }
+    }
+  }
+
+Environment variables:
+  BUILDKITE_API_TOKEN - Required for Buildkite builds
+  GITHUB_TOKEN        - Required for GitHub Actions builds`,
+	Run: func(cmd *cobra.Command, args []string) {
+		server := mcp.NewServer()
+		if err := server.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+			os.Exit(1)
 		}
-	}()
+	},
 }
 
 // submitCmd represents the submit command (distributed mode)
@@ -457,6 +467,7 @@ func init() {
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(submitCmd)
 	rootCmd.AddCommand(viewCmd)
+	rootCmd.AddCommand(mcpServerCmd)
 
 	// Add flags to analyze command
 	analyzeCmd.Flags().BoolP("json", "j", false, "Output findings as JSON instead of launching TUI")
