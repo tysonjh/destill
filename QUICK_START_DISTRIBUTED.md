@@ -1,78 +1,59 @@
-# Destill Distributed Mode - Quick Start
+# Distributed Mode Quick Start
 
-## 🚀 5-Minute Setup
+## 1. Build
 
-### 1. Build Binaries
 ```bash
 make build
 ```
 
-### 2. Start Infrastructure
+## 2. Start infrastructure
+
 ```bash
 cd docker && docker-compose up -d
 ```
 
-### 3. Create Topics
+## 3. Create topics
+
 ```bash
-docker exec -it destill-redpanda rpk topic create destill.logs.raw --partitions 3 --replicas 1 --config retention.ms=3600000
-docker exec -it destill-redpanda rpk topic create destill.analysis.findings --partitions 3 --replicas 1 --config retention.ms=604800000
-docker exec -it destill-redpanda rpk topic create destill.requests --partitions 1 --replicas 1
+docker exec -it destill-redpanda rpk topic create destill.logs.raw --partitions 3
+docker exec -it destill-redpanda rpk topic create destill.analysis.findings --partitions 3
+docker exec -it destill-redpanda rpk topic create destill.requests --partitions 1
 ```
 
-### 4. Set Environment Variables
+## 4. Set environment
+
 ```bash
-export BUILDKITE_API_TOKEN="your-token"
+export BUILDKITE_API_TOKEN="your_token"
+export GITHUB_TOKEN="your_token"
 export REDPANDA_BROKERS="localhost:19092"
 export POSTGRES_DSN="postgres://destill:destill@localhost:5432/destill?sslmode=disable"
 ```
 
-### 5. Start Agents (in separate terminals)
-```bash
-# Terminal 1
-./bin/destill-ingest
+## 5. Start agents
 
-# Terminal 2
+In separate terminals:
+
+```bash
+./bin/destill-ingest
 ./bin/destill-analyze
 ```
 
-### 6. Submit a Build for Analysis
+## 6. Submit and view
+
 ```bash
-# Terminal 3
 ./bin/destill submit "https://buildkite.com/org/pipeline/builds/123"
-# Returns: ✅ Submitted analysis request: req-1733769623456789
+# Returns: req-20251215T143022-a1b2c3d4
 
-# View results in TUI (wait a few seconds for processing)
-./bin/destill view req-1733769623456789
+./bin/destill view req-20251215T143022-a1b2c3d4
 ```
 
-## 🔍 Monitoring
+## Monitoring
 
-- **Redpanda Console**: http://localhost:8080
-- **Postgres**: `docker exec -it destill-postgres psql -U destill -d destill`
-- **Agent Logs**: Watch terminals 1 & 2
+- Redpanda Console: http://localhost:8080
+- Postgres: `docker exec -it destill-postgres psql -U destill -d destill`
 
-## 🧪 Verify It's Working
-
-```bash
-# Check topics
-docker exec -it destill-redpanda rpk topic list
-
-# Check consumer groups
-docker exec -it destill-redpanda rpk group list
-
-# Query findings
-docker exec -it destill-postgres psql -U destill -d destill -c \
-  "SELECT COUNT(*) FROM findings;"
-```
-
-## 🛑 Cleanup
+## Cleanup
 
 ```bash
-# Stop agents: Ctrl+C in terminals
 cd docker && docker-compose down -v
 ```
-
-## 📚 Full Documentation
-
-See `TESTING_DISTRIBUTED_MODE.md` for detailed walkthrough.
-
