@@ -91,7 +91,7 @@ func (m ProgressModel) View() string {
 
 	if m.done {
 		completeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-		status := completeStyle.Render("✓ Complete!")
+		status := completeStyle.Render("✓ Complete! Press (r) to refresh")
 		return lipgloss.JoinVertical(lipgloss.Center, logo, "", status)
 	}
 

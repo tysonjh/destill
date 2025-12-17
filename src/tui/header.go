@@ -197,19 +197,7 @@ func (h Header) Render(width int) string {
 		Bold(true).
 		Padding(0, 2)
 
-	var statusIcon string
-	switch h.loadStatus {
-	case StatusLoading:
-		statusIcon = "⏳"
-	case StatusComplete:
-		statusIcon = "✅"
-	case StatusError:
-		statusIcon = "❌"
-	default:
-		statusIcon = "📊"
-	}
-
-	statusText := fmt.Sprintf("%s %s", statusIcon, h.projectStatus)
+	statusText := h.projectStatus
 	if h.cardCount > 0 {
 		if h.lowConfidenceCount > 0 {
 			statusText = fmt.Sprintf("%s (%d findings, %d low conf, %d jobs)", statusText, h.cardCount, h.lowConfidenceCount, h.jobCount)
