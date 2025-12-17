@@ -1,0 +1,59 @@
+input:
+  kafka:
+    addresses:
+      - ${REDPANDA_BROKERS}
+    topics:
+      - destill.analysis.findings
+    consumer_group: destill-postgres-sink
+    start_from_oldest: true
+
+pipeline:
+  processors:
+    - mapping: |
+        root = this
+        # Ensure arrays are proper JSON
+        root.pre_context = this.pre_context.or([])
+        root.post_context = this.post_context.or([])
+        root.metadata = this.metadata.or({})
+
+output:
+  sql_insert:
+    driver: postgres
+    dsn: ${POSTGRES_DSN}
+    table: findings
+    columns:
+      - request_id
+      - build_url
+      - job_name
+      - message_hash
+      - severity
+      - confidence_score
+      - raw_message
+      - normalized_message
+      - pre_context
+      - post_context
+      - source
+      - line_number
+      - chunk_index
+      - metadata
+    args_mapping: |
+      root = [
+        this.request_id,
+        this.metadata.build_url.or(""),
+        this.job_name,
+        this.message_hash,
+        this.severity,
+        this.confidence_score,
+        this.raw_message,
+        this.normalized_message,
+        this.pre_context.format_json(),
+        this.post_context.format_json(),
+        this.source,
+        this.line_in_chunk,
+        this.chunk_index,
+        this.metadata.format_json()
+      ]
+    batching:
+      count: 100
+      period: 1s
+
