@@ -123,9 +123,14 @@ func displayJSON(msgBroker broker.Broker) error {
 // Helper Functions
 // ========================================
 
-// validateBuildURL validates the build URL format
+// validateBuildURL validates the build URL format and required API token
 func validateBuildURL(buildURL string) error {
-	if _, err := provider.ParseURL(buildURL); err != nil {
+	ref, err := provider.ParseURL(buildURL)
+	if err != nil {
+		return provider.WrapError(err)
+	}
+	// Validate token upfront to fail fast before starting the pipeline
+	if err := provider.ValidateToken(ref); err != nil {
 		return provider.WrapError(err)
 	}
 	return nil

@@ -78,6 +78,24 @@ func RegisterProvider(name string, factory ProviderFactory) {
 	providers[name] = factory
 }
 
+// ValidateToken checks if the required API token is set for the given build reference.
+// Call this early to fail fast before starting the pipeline.
+func ValidateToken(ref *BuildRef) error {
+	switch ref.Provider {
+	case "buildkite":
+		if os.Getenv("BUILDKITE_API_TOKEN") == "" {
+			return errors.New("BUILDKITE_API_TOKEN environment variable not set")
+		}
+	case "github":
+		if os.Getenv("GITHUB_TOKEN") == "" {
+			return errors.New("GITHUB_TOKEN environment variable not set")
+		}
+	default:
+		return fmt.Errorf("%w: %s", ErrProviderUnknown, ref.Provider)
+	}
+	return nil
+}
+
 // GetProvider returns the appropriate provider implementation for a build ref
 func GetProvider(ref *BuildRef) (Provider, error) {
 	factory, ok := providers[ref.Provider]
