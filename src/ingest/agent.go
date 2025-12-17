@@ -184,6 +184,9 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 	a.logger.Info("[IngestAgent] Completed processing request %s (%d log chunks)",
 		request.RequestID, totalChunks)
 
+	// Signal completion to progress subscribers
+	a.publishProgress(ctx, request.RequestID, "complete", scriptJobs, scriptJobs)
+
 	return nil
 }
 
