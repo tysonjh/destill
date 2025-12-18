@@ -7,7 +7,7 @@ Destill analyzes CI/CD build logs to surface errors ranked by confidence. It sup
 ### 1. Set up API tokens
 
 ```bash
-# For Buildkite
+# For Buildkite ('read_builds' and 'read_build_logs' scope)
 export BUILDKITE_API_TOKEN="your_token"
 
 # For GitHub Actions (PAT with 'repo' scope)
@@ -67,7 +67,7 @@ Ask your assistant:
 
 | Variable | Description |
 |----------|-------------|
-| `BUILDKITE_API_TOKEN` | Buildkite API token |
+| `BUILDKITE_API_TOKEN` | Buildkite API token with `read_builds` and `read_build_logs` scope|
 | `GITHUB_TOKEN` | GitHub PAT with `repo` scope |
 
 ## Development
