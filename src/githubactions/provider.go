@@ -18,6 +18,14 @@ func init() {
 // Provider implements provider.Provider for GitHub Actions
 type Provider struct {
 	client *Client
+	// Cached artifacts expanded from zip files (GitHub artifacts are per-run, not per-job)
+	// Each entry represents a single file extracted from artifact zips
+	cachedArtifacts []provider.Artifact
+	// Cached file contents keyed by artifact ID
+	cachedFiles map[string][]byte
+	// Owner/repo for artifact operations
+	owner string
+	repo  string
 }
 
 // NewProvider creates a GitHub Actions provider with API token
@@ -43,6 +51,10 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 	repo := ref.Metadata["repo"]
 	runID := ref.BuildID
 
+	// Cache owner/repo for artifact operations
+	p.owner = owner
+	p.repo = repo
+
 	run, err := p.client.GetWorkflowRun(ctx, owner, repo, runID)
 	if err != nil {
 		return nil, err
@@ -51,6 +63,36 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 	jobs, err := p.client.GetWorkflowJobs(ctx, owner, repo, runID)
 	if err != nil {
 		return nil, err
+	}
+
+	// Fetch and expand artifacts for the run (GitHub artifacts are per-run, not per-job)
+	// Each GitHub artifact is a zip file - we expand them to individual file entries
+	ghArtifacts, err := p.client.GetArtifacts(ctx, owner, repo, runID)
+	if err != nil {
+		// Don't fail the build fetch if artifacts fail - they're optional
+		ghArtifacts = nil
+	}
+	p.cachedArtifacts = nil
+	p.cachedFiles = make(map[string][]byte)
+	for _, art := range ghArtifacts {
+		// Download and expand this artifact zip
+		files, err := p.client.DownloadArtifact(ctx, art.ArchiveDownloadURL)
+		if err != nil {
+			// Skip artifacts that fail to download
+			continue
+		}
+		// Create an artifact entry for each file in the zip
+		for filename, content := range files {
+			artifactID := fmt.Sprintf("%d/%s", art.ID, filename)
+			p.cachedArtifacts = append(p.cachedArtifacts, provider.Artifact{
+				ID:          artifactID,
+				JobID:       "", // GitHub artifacts aren't tied to specific jobs
+				Path:        filename,
+				DownloadURL: artifactID, // Use ID as key for cached lookup
+				FileSize:    int64(len(content)),
+			})
+			p.cachedFiles[artifactID] = content
+		}
 	}
 
 	build := &provider.Build{
@@ -101,28 +143,23 @@ func (p *Provider) FetchJobLog(ctx context.Context, jobID string) (string, error
 	return p.client.GetJobLogs(ctx, owner, repo, id)
 }
 
-// FetchArtifacts retrieves artifacts for the workflow run
+// FetchArtifacts retrieves artifacts for the workflow run.
+// Note: GitHub artifacts are per-run, not per-job. This returns all run artifacts
+// regardless of jobID. Callers should deduplicate if processing multiple jobs.
 func (p *Provider) FetchArtifacts(ctx context.Context, jobID string) ([]provider.Artifact, error) {
-	// Known limitation: GitHub artifacts are per-run, not per-job.
-	// The current provider interface passes jobID, but GitHub's API requires runID.
-	// This will be addressed when the ingest agent is updated to support per-run artifacts.
-	// For now, return empty list as a placeholder implementation.
-	return []provider.Artifact{}, nil
+	// Return cached artifacts from FetchBuild
+	// Since GitHub artifacts are per-run, we return the same artifacts for any job
+	return p.cachedArtifacts, nil
 }
 
-// DownloadArtifact downloads artifact content (returns first file from zip)
+// DownloadArtifact returns cached artifact content.
+// GitHub artifacts are downloaded and expanded during FetchBuild.
 func (p *Provider) DownloadArtifact(ctx context.Context, artifact provider.Artifact) ([]byte, error) {
-	files, err := p.client.DownloadArtifact(ctx, artifact.DownloadURL)
-	if err != nil {
-		return nil, err
-	}
-
-	// Return first file from the artifact
-	for _, content := range files {
+	// Look up in cache using the artifact ID (which is the DownloadURL for cached artifacts)
+	if content, ok := p.cachedFiles[artifact.DownloadURL]; ok {
 		return content, nil
 	}
-
-	return nil, fmt.Errorf("no files in artifact")
+	return nil, fmt.Errorf("artifact not found in cache: %s", artifact.ID)
 }
 
 // mapGitHubStatus maps GitHub status/conclusion to Buildkite-like state
