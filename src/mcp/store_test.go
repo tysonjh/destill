@@ -20,7 +20,7 @@ func TestToManifest(t *testing.T) {
 		},
 	}
 
-	manifest := ToManifest("req-123", response)
+	manifest := ToManifest("req-123", response, nil)
 
 	// Check request ID
 	if manifest.RequestID != "req-123" {

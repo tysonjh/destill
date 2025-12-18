@@ -170,7 +170,7 @@ func TestToManifest_HybridResponse(t *testing.T) {
 		},
 	}
 
-	manifest := ToManifest("req-123", response)
+	manifest := ToManifest("req-123", response, nil)
 
 	// Tier 1 should be fully expanded with compression
 	if len(manifest.Tier1Findings) != 1 {

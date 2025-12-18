@@ -150,7 +150,8 @@ func convertRankedToFindings(ranked []ranking.RankedCard, jobStates map[string]s
 // ToManifest converts a TieredResponse to a ManifestResponse.
 // Tier 1 findings are fully expanded with compression applied.
 // Tier 2-3 findings are converted to lightweight summaries.
-func ToManifest(requestID string, response TieredResponse) ManifestResponse {
+// testSummary is optional - pass nil if no test results available.
+func ToManifest(requestID string, response TieredResponse, testSummary *contracts.TestSummary) ManifestResponse {
 	// Compress and include full tier 1 findings
 	tier1 := make([]Finding, len(response.Tier1UniqueFailures))
 	for i, f := range response.Tier1UniqueFailures {
@@ -169,6 +170,7 @@ func ToManifest(requestID string, response TieredResponse) ManifestResponse {
 	return ManifestResponse{
 		RequestID:     requestID,
 		Build:         response.Build,
+		Tests:         testSummary,
 		Tier1Findings: tier1,
 		OtherFindings: other,
 	}

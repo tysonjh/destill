@@ -159,6 +159,15 @@ const (
 	TierFilterNoise  = 2 // Noise only
 )
 
+// ViewMode represents the current view in the TUI
+type ViewMode int
+
+const (
+	ViewLogs    ViewMode = iota // Log findings view (default, existing TUI)
+	ViewSummary                 // Build summary overview
+	ViewTests                   // Test failures view
+)
+
 // MainModel is the main Bubble Tea model for the application.
 type MainModel struct {
 	header         Header
@@ -173,6 +182,11 @@ type MainModel struct {
 	searchQuery    string
 	ready          bool
 	tierFilter     int // TierFilterAll (default), TierFilterUnique, or TierFilterNoise
+
+	// Multi-view support
+	viewMode     ViewMode
+	summaryModel SummaryModel
+	testsModel   TestsModel
 
 	// Streaming support
 	broker         broker.Broker         // Message broker
@@ -238,6 +252,9 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 		detailViewport: viewport.New(0, 0),
 		ready:          false,
 		tierFilter:     TierFilterAll, // Show all by default
+		viewMode:       ViewLogs,      // Start with logs view (existing behavior)
+		summaryModel:   NewSummaryModel(styles),
+		testsModel:     NewTestsModel(styles),
 		broker:         brk,
 		cardChan:       channels.cardChan,
 		progressChan:   channels.progressChan,
@@ -517,9 +534,24 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.header.SetSearch(m.searchQuery, m.searchMode)
 			return m, nil
 		case "enter":
-			// Toggle focus to detail viewport
-			m.detailFocused = !m.detailFocused
+			// Toggle focus to detail viewport (only in logs view)
+			if m.viewMode == ViewLogs {
+				m.detailFocused = !m.detailFocused
+			}
 			return m, nil
+		case "s":
+			// Switch to summary view
+			m.viewMode = ViewSummary
+			m.updateSummaryData()
+			return m, tea.ClearScreen
+		case "t":
+			// Switch to tests view
+			m.viewMode = ViewTests
+			return m, tea.ClearScreen
+		case "l":
+			// Switch to logs view
+			m.viewMode = ViewLogs
+			return m, tea.ClearScreen
 		case "esc":
 			// If detail is focused, return to list
 			if m.detailFocused {
@@ -585,4 +617,33 @@ func (m *MainModel) mergePendingCards() {
 	if selectedItem, ok := m.listView.GetSelectedItem(); ok {
 		m.updateDetailContent(selectedItem)
 	}
+}
+
+// updateSummaryData updates the summary model with current data.
+func (m *MainModel) updateSummaryData() {
+	// Set size
+	m.summaryModel.SetSize(m.width, m.height-4) // -4 for header
+
+	// Set log findings counts
+	m.summaryModel.SetLogFindings(m.uniqueCount, m.noiseCount)
+
+	// Count jobs by status
+	failedJobs := 0
+	passedJobs := 0
+	otherJobs := 0
+	for _, job := range m.header.availableJobs {
+		if job.Failed {
+			failedJobs++
+		} else {
+			passedJobs++
+		}
+	}
+	m.summaryModel.SetJobCounts(failedJobs, passedJobs, otherJobs)
+
+	// Build status
+	status := "passed"
+	if failedJobs > 0 {
+		status = "failed"
+	}
+	m.summaryModel.SetBuildInfo(status, "", "")
 }

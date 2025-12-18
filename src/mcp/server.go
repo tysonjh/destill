@@ -109,7 +109,7 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	response.Build = buildInfo
 
 	// Return lightweight manifest
-	manifest := ToManifest(requestID, response)
+	manifest := ToManifest(requestID, response, nil) // TODO: Add test results
 	jsonBytes, err := json.Marshal(manifest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal response: %v", err)), nil

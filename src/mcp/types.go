@@ -57,10 +57,11 @@ type FindingSummary struct {
 // Tier 1 findings are fully expanded (they're the likely root causes).
 // Tier 2-3 findings are summarized for optional drill-down.
 type ManifestResponse struct {
-	RequestID     string           `json:"request_id"`
-	Build         BuildInfo        `json:"build"`
-	Tier1Findings []Finding        `json:"tier_1_findings"`
-	OtherFindings []FindingSummary `json:"other_findings"`
+	RequestID     string                 `json:"request_id"`
+	Build         BuildInfo              `json:"build"`
+	Tests         *contracts.TestSummary `json:"tests,omitempty"` // Test results with flaky detection
+	Tier1Findings []Finding              `json:"tier_1_findings"`
+	OtherFindings []FindingSummary       `json:"other_findings"`
 }
 
 // ExtractRequestID extracts the request_id from triage cards.

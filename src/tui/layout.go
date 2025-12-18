@@ -52,6 +52,20 @@ func (m MainModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, centeredProgress)
 	}
 
+	// Render based on current view mode
+	switch m.viewMode {
+	case ViewSummary:
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.summaryModel.View())
+	case ViewTests:
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.testsModel.View())
+	default:
+		// ViewLogs - existing behavior
+		return m.renderLogsView(header)
+	}
+}
+
+// renderLogsView renders the logs view (original TUI layout)
+func (m MainModel) renderLogsView(header string) string {
 	// Calculate panel dimensions
 	dims := m.calculateDimensions()
 
@@ -74,18 +88,35 @@ func (m MainModel) renderHelpText() string {
 	sepStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
 
 	var helpText string
-	if m.detailFocused {
-		helpText = fmt.Sprintf("%s: Scroll %s %s: Back %s %s: Quit",
-			keyStyle.Render("j/k"), sepStyle.Render("•"),
-			keyStyle.Render("Esc"), sepStyle.Render("•"),
+
+	// View-specific help
+	switch m.viewMode {
+	case ViewSummary:
+		helpText = fmt.Sprintf("%s: Tests %s %s: Logs %s %s: Quit",
+			keyStyle.Render("t"), sepStyle.Render("•"),
+			keyStyle.Render("l"), sepStyle.Render("•"),
 			keyStyle.Render("q"))
-	} else {
-		helpText = fmt.Sprintf("%s: Nav %s %s: All/Unique/Noise %s %s: View %s %s: Job %s %s %s",
+	case ViewTests:
+		helpText = fmt.Sprintf("%s: Scroll %s %s: Summary %s %s: Logs %s %s: Quit",
 			keyStyle.Render("j/k"), sepStyle.Render("•"),
-			keyStyle.Render("0/1/2"), sepStyle.Render("•"),
-			keyStyle.Render("Enter"), sepStyle.Render("•"),
-			keyStyle.Render("Tab"), sepStyle.Render("•"),
-			keyStyle.Render("/"), keyStyle.Render("q"))
+			keyStyle.Render("s"), sepStyle.Render("•"),
+			keyStyle.Render("l"), sepStyle.Render("•"),
+			keyStyle.Render("q"))
+	default: // ViewLogs
+		if m.detailFocused {
+			helpText = fmt.Sprintf("%s: Scroll %s %s: Back %s %s: Summary %s %s: Quit",
+				keyStyle.Render("j/k"), sepStyle.Render("•"),
+				keyStyle.Render("Esc"), sepStyle.Render("•"),
+				keyStyle.Render("s"), sepStyle.Render("•"),
+				keyStyle.Render("q"))
+		} else {
+			helpText = fmt.Sprintf("%s: Nav %s %s: All/Unique/Noise %s %s: Summary %s %s: Job %s %s %s",
+				keyStyle.Render("j/k"), sepStyle.Render("•"),
+				keyStyle.Render("0/1/2"), sepStyle.Render("•"),
+				keyStyle.Render("s"), sepStyle.Render("•"),
+				keyStyle.Render("Tab"), sepStyle.Render("•"),
+				keyStyle.Render("/"), keyStyle.Render("q"))
+		}
 	}
 
 	return m.styles.HelpStyle().Render(helpText)
@@ -101,6 +132,12 @@ func (m *MainModel) resizeComponents() {
 	// Resize viewport for detail panel (accounting for borders and job header)
 	m.detailViewport.Width = dims.rightPanelWidth - 2
 	m.detailViewport.Height = dims.availableHeight - 1 // -1 for the job header row
+
+	// Resize summary and tests views
+	headerHeight := lipgloss.Height(m.header.Render(m.width))
+	availableForViews := m.height - headerHeight - 2
+	m.summaryModel.SetSize(m.width, availableForViews)
+	m.testsModel.SetSize(m.width, availableForViews)
 
 	// Initialize detail content if not already set and we have items
 	if m.detailViewport.TotalLineCount() == 0 {
