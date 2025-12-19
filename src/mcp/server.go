@@ -155,7 +155,6 @@ func (s *Server) handleGetFindingDetails(ctx context.Context, request mcp.CallTo
 
 // runAnalysis runs the full analysis pipeline and collects cards.
 func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, BuildInfo, *contracts.TestSummary, error) {
-
 	// Validate URL and token upfront to fail fast
 	ref, err := provider.ParseURL(buildURL)
 	if err != nil {
