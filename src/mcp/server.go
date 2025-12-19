@@ -88,7 +88,7 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	limit := request.GetInt("limit", 15)
 
 	// Run analysis
-	cards, buildInfo, err := s.runAnalysis(ctx, url)
+	cards, buildInfo, testSummary, err := s.runAnalysis(ctx, url)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("analysis failed: %v", err)), nil
 	}
@@ -108,8 +108,8 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	response := TierFindings(cards, limit)
 	response.Build = buildInfo
 
-	// Return lightweight manifest
-	manifest := ToManifest(requestID, response, nil) // TODO: Add test results
+	// Return lightweight manifest with test results
+	manifest := ToManifest(requestID, response, testSummary)
 	jsonBytes, err := json.Marshal(manifest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal response: %v", err)), nil
@@ -154,14 +154,15 @@ func (s *Server) handleGetFindingDetails(ctx context.Context, request mcp.CallTo
 }
 
 // runAnalysis runs the full analysis pipeline and collects cards.
-func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, BuildInfo, error) {
+func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, BuildInfo, *contracts.TestSummary, error) {
+
 	// Validate URL and token upfront to fail fast
 	ref, err := provider.ParseURL(buildURL)
 	if err != nil {
-		return nil, BuildInfo{}, provider.WrapError(err)
+		return nil, BuildInfo{}, nil, provider.WrapError(err)
 	}
 	if err := provider.ValidateToken(ref); err != nil {
-		return nil, BuildInfo{}, provider.WrapError(err)
+		return nil, BuildInfo{}, nil, provider.WrapError(err)
 	}
 
 	// Create in-memory broker and start pipeline
@@ -171,8 +172,18 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	pipelineCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Subscribe to topics BEFORE starting pipeline to avoid race conditions
+	findingsCh, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "mcp-server-findings")
+	if err != nil {
+		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to findings: %w", err)
+	}
+	testsCh, err := msgBroker.Subscribe(ctx, contracts.TopicTestResults, "mcp-server-tests")
+	if err != nil {
+		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
+	}
+
 	if err := pipeline.Start(msgBroker, pipelineCtx); err != nil {
-		return nil, BuildInfo{}, fmt.Errorf("failed to start pipeline: %w", err)
+		return nil, BuildInfo{}, nil, fmt.Errorf("failed to start pipeline: %w", err)
 	}
 
 	// Submit analysis request
@@ -184,48 +195,56 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	}
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, BuildInfo{}, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, BuildInfo{}, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
 
-	// Collect findings with timeout
-	cards, err := s.collectFindings(ctx, msgBroker)
+	// Collect findings and test results with timeout
+	cards, testResults, err := s.collectFromChannels(ctx, findingsCh, testsCh)
 	if err != nil {
-		return nil, BuildInfo{}, err
+		return nil, BuildInfo{}, nil, err
 	}
 
 	// Build info
 	buildInfo := extractBuildInfo(cards, buildURL)
 
-	return cards, buildInfo, nil
-}
-
-// collectFindings subscribes to findings and collects them until timeout.
-func (s *Server) collectFindings(ctx context.Context, msgBroker broker.Broker) ([]contracts.TriageCard, error) {
-	ch, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "mcp-server")
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe: %w", err)
+	// Build test summary if we have test results
+	var testSummary *contracts.TestSummary
+	if len(testResults) > 0 {
+		testSummary = buildTestSummary(requestID, testResults)
 	}
 
+	return cards, buildInfo, testSummary, nil
+}
+
+// collectFromChannels collects findings and test results from pre-subscribed channels until timeout.
+func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh <-chan broker.Message) ([]contracts.TriageCard, []contracts.TestResult, error) {
 	var cards []contracts.TriageCard
+	var testResults []contracts.TestResult
 	timeout := time.After(120 * time.Second)
 	lastActivity := time.Now()
 
 	for {
 		select {
-		case msg := <-ch:
+		case msg := <-findingsCh:
 			var card contracts.TriageCard
 			if err := json.Unmarshal(msg.Value, &card); err == nil {
 				cards = append(cards, card)
 				lastActivity = time.Now()
 			}
+		case msg := <-testsCh:
+			var result contracts.TestResult
+			if err := json.Unmarshal(msg.Value, &result); err == nil {
+				testResults = append(testResults, result)
+				lastActivity = time.Now()
+			}
 		case <-timeout:
-			return cards, nil
+			return cards, testResults, nil
 		case <-ctx.Done():
-			return cards, ctx.Err()
+			return cards, testResults, ctx.Err()
 		default:
 			if time.Since(lastActivity) > 10*time.Second && len(cards) > 0 {
-				return cards, nil
+				return cards, testResults, nil
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -278,4 +297,39 @@ func generateRequestID() string {
 	randomBytes := make([]byte, 4)
 	rand.Read(randomBytes)
 	return fmt.Sprintf("req-%s-%s", timestamp, hex.EncodeToString(randomBytes))
+}
+
+// buildTestSummary creates a TestSummary from collected test results.
+func buildTestSummary(requestID string, results []contracts.TestResult) *contracts.TestSummary {
+	if len(results) == 0 {
+		return nil
+	}
+
+	summary := &contracts.TestSummary{
+		RequestID: requestID,
+	}
+
+	// Extract pipeline info from first result
+	if len(results) > 0 {
+		summary.PipelineID = results[0].PipelineID
+		summary.BuildNumber = results[0].BuildNumber
+	}
+
+	// Count pass/fail
+	for _, r := range results {
+		summary.TotalTests++
+		if r.Passed {
+			summary.PassedCount++
+		} else {
+			summary.FailedCount++
+			// Add to failures list
+			failure := contracts.TestFailure{
+				TestName:       r.TestName,
+				FailureMessage: r.FailureMessage,
+			}
+			summary.NovelFailures = append(summary.NovelFailures, failure)
+		}
+	}
+
+	return summary
 }
