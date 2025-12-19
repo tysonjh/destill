@@ -25,12 +25,18 @@ type SummaryModel struct {
 	otherJobCount   int
 
 	// Log findings
-	uniqueCount int
-	noiseCount  int
+	uniqueCount        int
+	noiseCount         int
+	totalFindings      int
+	lowConfidenceCount int
+	analyzedJobs       int
 
 	// Test results
 	testSummary    *contracts.TestSummary
 	hasTestResults bool
+
+	// Warnings (e.g., token scope issues)
+	warnings []string
 }
 
 // NewSummaryModel creates a new summary view model.
@@ -56,15 +62,23 @@ func (m *SummaryModel) SetJobCounts(failed, passed, other int) {
 }
 
 // SetLogFindings updates the log finding counts.
-func (m *SummaryModel) SetLogFindings(unique, noise int) {
+func (m *SummaryModel) SetLogFindings(unique, noise, total, lowConf, jobs int) {
 	m.uniqueCount = unique
 	m.noiseCount = noise
+	m.totalFindings = total
+	m.lowConfidenceCount = lowConf
+	m.analyzedJobs = jobs
 }
 
 // SetTestSummary updates the test summary.
 func (m *SummaryModel) SetTestSummary(summary *contracts.TestSummary) {
 	m.testSummary = summary
 	m.hasTestResults = summary != nil && summary.TotalTests > 0
+}
+
+// SetWarnings updates the warnings list.
+func (m *SummaryModel) SetWarnings(warnings []string) {
+	m.warnings = warnings
 }
 
 // SetSize sets the view dimensions.
@@ -99,9 +113,12 @@ func (m SummaryModel) View() string {
 	statusSection := m.renderStatusSection()
 	sections = append(sections, statusSection)
 
-	// Two-column layout for Test Results and Log Findings
-	columnsSection := m.renderColumnsSection()
-	sections = append(sections, columnsSection)
+	// Test Results section
+	sections = append(sections, m.renderTestResults())
+	sections = append(sections, "")
+
+	// Log Findings section
+	sections = append(sections, m.renderLogFindings())
 
 	// Key bindings footer
 	footer := m.renderFooter()
@@ -170,24 +187,6 @@ func (m SummaryModel) renderStatusSection() string {
 	)
 }
 
-func (m SummaryModel) renderColumnsSection() string {
-	colWidth := (m.width - 10) / 2
-
-	// Left column: Test Results
-	testContent := m.renderTestResults()
-	leftCol := lipgloss.NewStyle().
-		Width(colWidth).
-		Render(testContent)
-
-	// Right column: Log Findings
-	logContent := m.renderLogFindings()
-	rightCol := lipgloss.NewStyle().
-		Width(colWidth).
-		Render(logContent)
-
-	return lipgloss.JoinHorizontal(lipgloss.Top, leftCol, "    ", rightCol)
-}
-
 func (m SummaryModel) renderTestResults() string {
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -203,7 +202,13 @@ func (m SummaryModel) renderTestResults() string {
 
 	if !m.hasTestResults {
 		lines = append(lines, labelStyle.Render("  No test results found"))
-		lines = append(lines, labelStyle.Render("  (build failed before tests)"))
+		// Show warning hint if there are warnings
+		if len(m.warnings) > 0 {
+			warningStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFA500"))
+			for _, warning := range m.warnings {
+				lines = append(lines, warningStyle.Render("  "+warning))
+			}
+		}
 		return lipgloss.JoinVertical(lipgloss.Left, lines...)
 	}
 
@@ -243,9 +248,21 @@ func (m SummaryModel) renderLogFindings() string {
 		Foreground(m.styles.PrimaryBlue).
 		Underline(true)
 
+	labelStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
+
 	var lines []string
 	lines = append(lines, headerStyle.Render("Log Findings"))
 	lines = append(lines, "")
+
+	// Summary stats: X findings from Y jobs (Z low confidence filtered)
+	if m.totalFindings > 0 || m.analyzedJobs > 0 {
+		statsLine := fmt.Sprintf("  %d findings from %d jobs", m.totalFindings, m.analyzedJobs)
+		if m.lowConfidenceCount > 0 {
+			statsLine += fmt.Sprintf(" (%d low confidence filtered)", m.lowConfidenceCount)
+		}
+		lines = append(lines, labelStyle.Render(statsLine))
+		lines = append(lines, "")
+	}
 
 	// Unique errors
 	if m.uniqueCount > 0 {
@@ -260,8 +277,7 @@ func (m SummaryModel) renderLogFindings() string {
 	}
 
 	// If no findings
-	if m.uniqueCount == 0 && m.noiseCount == 0 {
-		labelStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
+	if m.uniqueCount == 0 && m.noiseCount == 0 && m.totalFindings == 0 {
 		lines = append(lines, labelStyle.Render("  No log findings"))
 	}
 

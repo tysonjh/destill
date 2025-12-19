@@ -57,7 +57,8 @@ func (m MainModel) View() string {
 	case ViewSummary:
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.summaryModel.View())
 	case ViewTests:
-		return lipgloss.JoinVertical(lipgloss.Left, header, m.testsModel.View())
+		help := m.renderHelpText()
+		return lipgloss.JoinVertical(lipgloss.Left, header, m.testsModel.View(), help)
 	default:
 		// ViewLogs - existing behavior
 		return m.renderLogsView(header)

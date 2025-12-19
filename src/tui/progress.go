@@ -35,21 +35,21 @@ type ProgressMsg struct {
 	Stage   string
 	Current int
 	Total   int
+	Warning string // Optional warning message
 }
 
 // SpinnerTickMsg triggers spinner animation frame advance
 type SpinnerTickMsg time.Time
 
 type ProgressModel struct {
-	stage        string
-	current      int
-	total        int
 	done         bool
 	spinnerFrame int
 }
 
 func NewProgressModel() ProgressModel {
-	return ProgressModel{spinnerFrame: 0}
+	return ProgressModel{
+		spinnerFrame: 0,
+	}
 }
 
 // SpinnerTick returns a command that sends SpinnerTickMsg after a delay
@@ -62,9 +62,6 @@ func SpinnerTick() tea.Cmd {
 func (m ProgressModel) Update(msg tea.Msg) (ProgressModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case ProgressMsg:
-		m.stage = msg.Stage
-		m.current = msg.Current
-		m.total = msg.Total
 		if msg.Stage == "complete" {
 			m.done = true
 		}
@@ -95,20 +92,10 @@ func (m ProgressModel) View() string {
 		return lipgloss.JoinVertical(lipgloss.Center, logo, "", status)
 	}
 
-	// Build progress line with spinner
+	// Simple single-line progress with spinner
 	spinner := spinnerFrames[m.spinnerFrame]
 	spinnerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFD700")) // Gold
-
-	var statusLine string
-	if m.total > 0 {
-		pct := float64(m.current) / float64(m.total) * 100
-		statusLine = fmt.Sprintf("%s %s (%d/%d, %.0f%%)",
-			spinnerStyle.Render(spinner), m.stage, m.current, m.total, pct)
-	} else if m.stage != "" {
-		statusLine = fmt.Sprintf("%s %s...", spinnerStyle.Render(spinner), m.stage)
-	} else {
-		statusLine = fmt.Sprintf("%s Loading...", spinnerStyle.Render(spinner))
-	}
+	statusLine := fmt.Sprintf("%s Downloading build data...", spinnerStyle.Render(spinner))
 
 	return lipgloss.JoinVertical(lipgloss.Center, logo, "", statusLine)
 }

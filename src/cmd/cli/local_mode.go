@@ -62,6 +62,15 @@ func NewLocalMode() (*LocalMode, error) {
 // SubmitAnalysis publishes an analysis request to the broker.
 // The ingest and analyze agents will process this request asynchronously.
 func (lm *LocalMode) SubmitAnalysis(buildURL string) (string, error) {
+	// Debug: log when submitting
+	if os.Getenv("DESTILL_DEBUG_ARTIFACTS") != "" {
+		f, _ := os.OpenFile("/tmp/destill-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if f != nil {
+			fmt.Fprintf(f, "SubmitAnalysis called for: %s\n", buildURL)
+			f.Close()
+		}
+	}
+
 	requestID, data, err := buildAnalysisRequest(buildURL)
 	if err != nil {
 		return "", err
@@ -69,6 +78,15 @@ func (lm *LocalMode) SubmitAnalysis(buildURL string) (string, error) {
 
 	if err := lm.broker.Publish(lm.ctx, contracts.TopicRequests, requestID, data); err != nil {
 		return "", fmt.Errorf("failed to publish request: %w", err)
+	}
+
+	// Debug: log after publishing
+	if os.Getenv("DESTILL_DEBUG_ARTIFACTS") != "" {
+		f, _ := os.OpenFile("/tmp/destill-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if f != nil {
+			fmt.Fprintf(f, "Published request %s to broker\n", requestID)
+			f.Close()
+		}
 	}
 
 	return requestID, nil
@@ -89,27 +107,26 @@ func (lm *LocalMode) Close() {
 // Display Layer - Presentation
 // ========================================
 
-// displayTUI launches the interactive terminal UI.
-// If initialCards is provided (from cache), displays them immediately without streaming.
-// If initialCards is empty, streams live updates from the broker as analysis progresses.
-func displayTUI(msgBroker broker.Broker, initialCards []contracts.TriageCard) error {
+// displayTUI launches the interactive terminal UI with pre-subscribed channels.
+// If channels is nil and initialCards is provided (from cache), displays them immediately.
+// If channels is provided, streams live updates from the broker as analysis progresses.
+func displayTUI(channels *tui.BrokerChannels, initialCards []contracts.TriageCard) error {
 	// Show appropriate startup message
-	if len(initialCards) == 0 {
-		fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
-	} else {
+	if channels == nil || channels.CardChan == nil {
 		fmt.Println("🚀 Launching TUI with cached data...")
+	} else {
+		fmt.Println("🚀 Launching TUI (cards will stream in as they're analyzed)...")
 	}
 
 	// Brief pause to ensure log output completes before TUI starts
 	time.Sleep(100 * time.Millisecond)
 
-	// Determine if broker should stream (only if no cache)
-	var brokerForTUI broker.Broker
-	if len(initialCards) == 0 {
-		brokerForTUI = msgBroker
+	// Check for debug mode - if enabled, tell user where logs go
+	if os.Getenv("DESTILL_DEBUG_ARTIFACTS") != "" {
+		fmt.Println("[DEBUG] Artifact debug logging enabled - writing to /tmp/destill-debug.log")
 	}
 
-	return tui.StartWithBroker(brokerForTUI, initialCards)
+	return tui.StartWithChannels(channels, initialCards)
 }
 
 // displayJSON collects findings from the broker and outputs them as JSON.

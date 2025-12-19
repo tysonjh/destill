@@ -81,6 +81,7 @@ type ProgressUpdate struct {
 	Current   int    `json:"current"` // Current item number (0 if not applicable)
 	Total     int    `json:"total"`   // Total items (0 if not applicable)
 	Timestamp string `json:"timestamp"`
+	Warning   string `json:"warning,omitempty"` // Optional warning message (e.g., token scope issues)
 }
 
 // GetRecurrenceCount returns the recurrence count from metadata, defaulting to 1.

@@ -50,12 +50,19 @@ type initialState struct {
 	allJobs        []JobInfo
 }
 
-// brokerChannels holds the channels and context for broker subscriptions
-type brokerChannels struct {
-	cardChan     <-chan broker.Message
-	progressChan <-chan broker.Message
-	ctx          context.Context
-	cancel       context.CancelFunc
+// BrokerChannels holds the channels and context for broker subscriptions.
+// Exported so callers can pre-subscribe before analysis starts.
+type BrokerChannels struct {
+	CardChan        <-chan broker.Message
+	ProgressChan    <-chan broker.Message
+	TestResultsChan <-chan broker.Message
+	Ctx             context.Context
+	Cancel          context.CancelFunc
+}
+
+// testResultMsg is sent when a test result arrives from the broker
+type testResultMsg struct {
+	result contracts.TestResult
 }
 
 // buildInitialState processes the initial cards and builds the state needed for the TUI.
@@ -75,8 +82,8 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 		if !jobsDiscovered[card.JobName] {
 			jobsDiscovered[card.JobName] = true
 		}
-		// Track if this job failed (exit_status != "0")
-		if exitStatus, ok := card.Metadata["exit_status"]; ok && exitStatus != "0" {
+		// Track if this job failed
+		if card.Metadata["job_state"] == "failed" {
 			jobsFailed[card.JobName] = true
 		}
 	}
@@ -123,11 +130,12 @@ func initializeListView(state *initialState) View {
 	return listView
 }
 
-// subscribeToBroker sets up subscriptions to the broker channels.
+// SubscribeToBroker sets up subscriptions to the broker channels.
+// Call this BEFORE submitting analysis to avoid race conditions with message delivery.
 // Returns nil channels if broker is nil.
-func subscribeToBroker(brk broker.Broker) (*brokerChannels, error) {
+func SubscribeToBroker(brk broker.Broker) (*BrokerChannels, error) {
 	if brk == nil {
-		return &brokerChannels{}, nil
+		return &BrokerChannels{}, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -144,11 +152,18 @@ func subscribeToBroker(brk broker.Broker) (*brokerChannels, error) {
 		return nil, err
 	}
 
-	return &brokerChannels{
-		cardChan:     cardChan,
-		progressChan: progressChan,
-		ctx:          ctx,
-		cancel:       cancel,
+	testResultsChan, err := brk.Subscribe(ctx, contracts.TopicTestResults, "tui-test-results-consumer")
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	return &BrokerChannels{
+		CardChan:        cardChan,
+		ProgressChan:    progressChan,
+		TestResultsChan: testResultsChan,
+		Ctx:             ctx,
+		Cancel:          cancel,
 	}, nil
 }
 
@@ -189,17 +204,20 @@ type MainModel struct {
 	testsModel   TestsModel
 
 	// Streaming support
-	broker         broker.Broker         // Message broker
-	cardChan       <-chan broker.Message // Channel receiving cards from broker
-	progressChan   <-chan broker.Message // Channel receiving progress updates
-	pendingCards   []Item                // Cards waiting to be merged
-	hashMap        map[string]*Item      // For grouping by hash
-	status         LoadStatus            // Current loading status
-	cardCount      int                   // Total cards received (above threshold)
-	droppedCount   int                   // Cards dropped due to low confidence
-	jobsDiscovered map[string]bool       // Jobs we've seen so far
-	ctx            context.Context       // Context for broker operations
-	cancel         context.CancelFunc    // Cancel function
+	cardChan        <-chan broker.Message // Channel receiving cards from broker
+	progressChan    <-chan broker.Message // Channel receiving progress updates
+	testResultsChan <-chan broker.Message // Channel receiving test results
+	pendingCards    []Item                // Cards waiting to be merged
+	hashMap         map[string]*Item      // For grouping by hash
+	status          LoadStatus            // Current loading status
+	cardCount       int                   // Total cards received (above threshold)
+	droppedCount    int                   // Cards dropped due to low confidence
+	jobsDiscovered  map[string]bool       // Jobs we've seen so far
+	ctx             context.Context       // Context for broker operations
+	cancel          context.CancelFunc    // Cancel function
+
+	// Test results tracking
+	testResults []contracts.TestResult
 
 	// Progress tracking
 	progress ProgressModel // Progress model for showing loading state
@@ -207,6 +225,9 @@ type MainModel struct {
 	// Tier counts for header display
 	uniqueCount int
 	noiseCount  int
+
+	// Warnings collected during analysis
+	warnings []string
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -219,9 +240,25 @@ func Start(cards []contracts.TriageCard) error {
 // If broker is provided, subscribes to ci_failures_ranked for live updates.
 // Invariant: If broker is not nil, initialCards must be empty.
 func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) error {
-	// Enforce invariant: broker and initialCards are mutually exclusive
-	if brk != nil && len(initialCards) > 0 {
-		return fmt.Errorf("invalid arguments: broker and initialCards are mutually exclusive (broker != nil requires empty initialCards)")
+	// Subscribe to broker if provided
+	channels, err := SubscribeToBroker(brk)
+	if err != nil {
+		return err
+	}
+	return StartWithChannels(channels, initialCards)
+}
+
+// StartWithChannels initializes the TUI with pre-subscribed broker channels.
+// Use this when you need to subscribe BEFORE submitting analysis to avoid race conditions.
+// If channels is nil or has nil CardChan, uses the provided initial cards only (no streaming).
+// Invariant: If channels has non-nil CardChan, initialCards must be empty.
+func StartWithChannels(channels *BrokerChannels, initialCards []contracts.TriageCard) error {
+	// Determine if we're in streaming mode
+	streaming := channels != nil && channels.CardChan != nil
+
+	// Enforce invariant: streaming and initialCards are mutually exclusive
+	if streaming && len(initialCards) > 0 {
+		return fmt.Errorf("invalid arguments: streaming channels and initialCards are mutually exclusive")
 	}
 
 	styles := DefaultStyles()
@@ -229,56 +266,67 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 
 	// Determine initial status
 	status := StatusComplete
-	if brk != nil {
+	if streaming {
 		status = StatusLoading
 	}
 
 	header := initializeHeader(styles, state, status)
 	listView := initializeListView(state)
 
-	channels, err := subscribeToBroker(brk)
-	if err != nil {
-		return err
-	}
-
 	// Get tier counts for header
 	unique, noise := getTierCounts(state.hashMap)
 
-	model := MainModel{
-		header:         header,
-		listView:       listView,
-		items:          state.items,
-		styles:         styles,
-		detailViewport: viewport.New(0, 0),
-		ready:          false,
-		tierFilter:     TierFilterAll, // Show all by default
-		viewMode:       ViewLogs,      // Start with logs view (existing behavior)
-		summaryModel:   NewSummaryModel(styles),
-		testsModel:     NewTestsModel(styles),
-		broker:         brk,
-		cardChan:       channels.cardChan,
-		progressChan:   channels.progressChan,
-		pendingCards:   nil,
-		hashMap:        state.hashMap,
-		status:         status,
-		cardCount:      len(initialCards),
-		droppedCount:   0,
-		jobsDiscovered: state.jobsDiscovered,
-		ctx:            channels.ctx,
-		cancel:         channels.cancel,
-		progress:       NewProgressModel(),
-		uniqueCount:    unique,
-		noiseCount:     noise,
+	// Extract channels (handle nil case)
+	var cardChan <-chan broker.Message
+	var progressChan <-chan broker.Message
+	var testResultsChan <-chan broker.Message
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if channels != nil {
+		cardChan = channels.CardChan
+		progressChan = channels.ProgressChan
+		testResultsChan = channels.TestResultsChan
+		ctx = channels.Ctx
+		cancel = channels.Cancel
 	}
-	// Update header with tier counts
+
+	model := MainModel{
+		header:          header,
+		listView:        listView,
+		items:           state.items,
+		styles:          styles,
+		detailViewport:  viewport.New(0, 0),
+		ready:           false,
+		tierFilter:      TierFilterAll, // Show all by default
+		viewMode:        ViewSummary,   // Start with summary view
+		summaryModel:    NewSummaryModel(styles),
+		testsModel:      NewTestsModel(styles),
+		cardChan:        cardChan,
+		progressChan:    progressChan,
+		testResultsChan: testResultsChan,
+		pendingCards:    nil,
+		hashMap:         state.hashMap,
+		status:          status,
+		cardCount:       len(initialCards),
+		droppedCount:    0,
+		jobsDiscovered:  state.jobsDiscovered,
+		ctx:             ctx,
+		cancel:          cancel,
+		progress:        NewProgressModel(),
+		uniqueCount:     unique,
+		noiseCount:      noise,
+	}
+	// Update header with tier counts and view mode
 	model.header.SetTierCounts(unique, noise)
+	model.header.SetViewMode(ViewSummary) // Start with summary view
+	model.updateSummaryData()             // Initialize summary data
 	// Apply default tier filter (hide noise)
 	model.applyFilter()
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err = p.Run()
-	if channels.cancel != nil {
-		channels.cancel()
+	_, err := p.Run()
+	if cancel != nil {
+		cancel()
 	}
 	return err
 }
@@ -330,6 +378,10 @@ func (m MainModel) Init() tea.Cmd {
 		// Start listening for progress updates
 		cmds = append(cmds, listenForProgress(m.progressChan))
 	}
+	if m.testResultsChan != nil {
+		// Start listening for test results
+		cmds = append(cmds, listenForTestResults(m.testResultsChan))
+	}
 	// Start spinner animation for loading screen
 	cmds = append(cmds, SpinnerTick())
 	return tea.Batch(cmds...)
@@ -369,7 +421,25 @@ func listenForProgress(progressChan <-chan broker.Message) tea.Cmd {
 			Stage:   update.Stage,
 			Current: update.Current,
 			Total:   update.Total,
+			Warning: update.Warning,
 		}
+	}
+}
+
+// listenForTestResults returns a command that waits for test results from the broker
+func listenForTestResults(testResultsChan <-chan broker.Message) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-testResultsChan
+		if !ok {
+			// Channel closed
+			return nil
+		}
+
+		var result contracts.TestResult
+		if err := json.Unmarshal(msg.Value, &result); err != nil {
+			return nil
+		}
+		return testResultMsg{result: result}
 	}
 }
 
@@ -382,9 +452,25 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProgressMsg:
 		m.progress, cmd = m.progress.Update(msg)
 		cmds = append(cmds, cmd)
+		// Track warnings
+		if msg.Warning != "" {
+			m.warnings = append(m.warnings, msg.Warning)
+			m.summaryModel.SetWarnings(m.warnings)
+		}
 		// Keep listening for more progress updates
 		if m.progressChan != nil {
 			cmds = append(cmds, listenForProgress(m.progressChan))
+		}
+		return m, tea.Batch(cmds...)
+
+	case testResultMsg:
+		// New test result arrived from broker
+		m.testResults = append(m.testResults, msg.result)
+		// Update test summary
+		m.updateTestSummary()
+		// Keep listening for more test results
+		if m.testResultsChan != nil {
+			cmds = append(cmds, listenForTestResults(m.testResultsChan))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -407,10 +493,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.jobsDiscovered[msg.card.JobName] = true
 		}
 		// Update job status in header (handles both new jobs and updating failed status)
-		failed := false
-		if exitStatus, ok := msg.card.Metadata["exit_status"]; ok && exitStatus != "0" {
-			failed = true
-		}
+		failed := msg.card.Metadata["job_state"] == "failed"
 		m.header.AddJob(msg.card.JobName, failed)
 
 		// Add card to pending
@@ -433,12 +516,27 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.pendingCards) > 0 {
 			m.mergePendingCards()
 		}
-		return m, nil
+		// Continue listening for test results and progress (warnings) - ArtifactAgent
+		// may still be publishing after the analysis agent completes
+		if m.testResultsChan != nil {
+			cmds = append(cmds, listenForTestResults(m.testResultsChan))
+		}
+		if m.progressChan != nil {
+			cmds = append(cmds, listenForProgress(m.progressChan))
+		}
+		return m, tea.Batch(cmds...)
 
 	case pipelineErrorMsg:
 		m.status = StatusError
 		m.header.SetLoadStatus(m.status, m.cardCount, len(m.jobsDiscovered))
-		return m, nil
+		// Continue listening for test results and progress even on error
+		if m.testResultsChan != nil {
+			cmds = append(cmds, listenForTestResults(m.testResultsChan))
+		}
+		if m.progressChan != nil {
+			cmds = append(cmds, listenForProgress(m.progressChan))
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -500,7 +598,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.pendingCards) > 0 {
 				m.mergePendingCards()
 			}
-			return m, nil
+			return m, tea.ClearScreen
 		case "0":
 			// Show all tiers
 			m.tierFilter = TierFilterAll
@@ -542,15 +640,18 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "s":
 			// Switch to summary view
 			m.viewMode = ViewSummary
+			m.header.SetViewMode(ViewSummary)
 			m.updateSummaryData()
 			return m, tea.ClearScreen
 		case "t":
 			// Switch to tests view
 			m.viewMode = ViewTests
+			m.header.SetViewMode(ViewTests)
 			return m, tea.ClearScreen
 		case "l":
 			// Switch to logs view
 			m.viewMode = ViewLogs
+			m.header.SetViewMode(ViewLogs)
 			return m, tea.ClearScreen
 		case "esc":
 			// If detail is focused, return to list
@@ -567,18 +668,25 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Route updates based on focus
-	if m.detailFocused {
-		// Detail viewport is focused, send keys to it
-		m.detailViewport, cmd = m.detailViewport.Update(msg)
+	// Route updates based on view mode and focus
+	switch m.viewMode {
+	case ViewTests:
+		// Route to tests model for scrolling
+		m.testsModel, cmd = m.testsModel.Update(msg)
 		cmds = append(cmds, cmd)
-	} else {
-		// List is focused, send keys to it
-		m.listView, cmd = m.listView.Update(msg)
-		cmds = append(cmds, cmd)
-		// Update detail content when list selection changes
-		if selectedItem, ok := m.listView.GetSelectedItem(); ok {
-			m.updateDetailContent(selectedItem)
+	case ViewLogs:
+		if m.detailFocused {
+			// Detail viewport is focused, send keys to it
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			cmds = append(cmds, cmd)
+		} else {
+			// List is focused, send keys to it
+			m.listView, cmd = m.listView.Update(msg)
+			cmds = append(cmds, cmd)
+			// Update detail content when list selection changes
+			if selectedItem, ok := m.listView.GetSelectedItem(); ok {
+				m.updateDetailContent(selectedItem)
+			}
 		}
 	}
 
@@ -617,6 +725,9 @@ func (m *MainModel) mergePendingCards() {
 	if selectedItem, ok := m.listView.GetSelectedItem(); ok {
 		m.updateDetailContent(selectedItem)
 	}
+
+	// Update summary data so it reflects latest state
+	m.updateSummaryData()
 }
 
 // updateSummaryData updates the summary model with current data.
@@ -625,7 +736,7 @@ func (m *MainModel) updateSummaryData() {
 	m.summaryModel.SetSize(m.width, m.height-4) // -4 for header
 
 	// Set log findings counts
-	m.summaryModel.SetLogFindings(m.uniqueCount, m.noiseCount)
+	m.summaryModel.SetLogFindings(m.uniqueCount, m.noiseCount, m.cardCount, m.droppedCount, len(m.header.availableJobs))
 
 	// Count jobs by status
 	failedJobs := 0
@@ -646,4 +757,37 @@ func (m *MainModel) updateSummaryData() {
 		status = "failed"
 	}
 	m.summaryModel.SetBuildInfo(status, "", "")
+}
+
+// updateTestSummary builds a test summary from collected test results
+func (m *MainModel) updateTestSummary() {
+	if len(m.testResults) == 0 {
+		return
+	}
+
+	// Count passed/failed
+	passed := 0
+	var failures []contracts.TestFailure
+	for _, result := range m.testResults {
+		if result.Passed {
+			passed++
+		} else {
+			failures = append(failures, contracts.TestFailure{
+				TestName:       result.TestName,
+				FailureMessage: result.FailureMessage,
+				FailureRate:    0, // TODO: integrate with flaky detection
+				IsFlaky:        false,
+			})
+		}
+	}
+
+	summary := &contracts.TestSummary{
+		TotalTests:    len(m.testResults),
+		PassedCount:   passed,
+		FailedCount:   len(failures),
+		NovelFailures: failures, // For now, treat all failures as novel
+	}
+
+	m.summaryModel.SetTestSummary(summary)
+	m.testsModel.SetTestData(summary, m.testResults)
 }

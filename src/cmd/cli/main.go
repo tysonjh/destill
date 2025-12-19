@@ -155,6 +155,11 @@ Examples:
   destill analyze https://buildkite.com/org/pipeline/builds/4091 --cache build.json`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// Debug check at very start
+		if os.Getenv("DESTILL_DEBUG_ARTIFACTS") != "" {
+			fmt.Println("[DEBUG] DESTILL_DEBUG_ARTIFACTS is set")
+		}
+
 		buildURL := args[0]
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		cacheFile, _ := cmd.Flags().GetString("cache")
@@ -173,14 +178,13 @@ Examples:
 		}
 		defer mode.Close()
 
-		// 2. Submit: Publish analysis request
-		if _, err := mode.SubmitAnalysis(buildURL); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to submit analysis: %v\n", err)
-			os.Exit(1)
-		}
-
 		// 3. Display: Show results in requested format
 		if jsonOutput {
+			// 2. Submit: Publish analysis request
+			if _, err := mode.SubmitAnalysis(buildURL); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to submit analysis: %v\n", err)
+				os.Exit(1)
+			}
 			// JSON output: collect and display findings
 			if err := displayJSON(mode.Broker()); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -198,7 +202,24 @@ Examples:
 				fmt.Printf("📂 Loaded %d cards from cache: %s\n", len(initialCards), cacheFile)
 			}
 
-			if err := displayTUI(mode.Broker(), initialCards); err != nil {
+			// For TUI: Subscribe BEFORE submitting to avoid race conditions
+			// where warnings are published before the TUI is listening
+			var channels *tui.BrokerChannels
+			if len(initialCards) == 0 {
+				channels, err = tui.SubscribeToBroker(mode.Broker())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to subscribe to broker: %v\n", err)
+					os.Exit(1)
+				}
+			}
+
+			// 2. Submit: Publish analysis request (after subscribing)
+			if _, err := mode.SubmitAnalysis(buildURL); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to submit analysis: %v\n", err)
+				os.Exit(1)
+			}
+
+			if err := displayTUI(channels, initialCards); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
