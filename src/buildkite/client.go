@@ -120,6 +120,83 @@ func (c *Client) GetBuild(ctx context.Context, org, pipeline, buildNumber string
 	return &build, nil
 }
 
+// ListBuildsOptions contains optional filters for listing builds.
+type ListBuildsOptions struct {
+	Branch string // Filter by branch name (optional)
+}
+
+// ListBuilds fetches recent builds for a pipeline.
+// Returns up to `limit` builds, ordered by build number descending (newest first).
+// If opts is nil or opts.Branch is empty, returns builds from all branches.
+func (c *Client) ListBuilds(ctx context.Context, org, pipeline string, limit int, opts *ListBuildsOptions) ([]Build, error) {
+	url := fmt.Sprintf("%s/organizations/%s/pipelines/%s/builds?per_page=%d", APIBaseURL, org, pipeline, limit)
+
+	// Add branch filter if specified
+	if opts != nil && opts.Branch != "" {
+		url += "&branch=" + opts.Branch
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.apiToken))
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var builds []Build
+	if err := json.NewDecoder(resp.Body).Decode(&builds); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return builds, nil
+}
+
+// ParsePipelineURL extracts the organization and pipeline from a Buildkite pipeline URL.
+// Supports formats:
+//   - https://buildkite.com/{org}/{pipeline}/builds?branch=dev
+//   - https://buildkite.com/{org}/{pipeline}/builds
+//   - https://buildkite.com/{org}/{pipeline}
+//
+// Returns org, pipeline, and optional branch from query string.
+func ParsePipelineURL(pipelineURL string) (org, pipeline, branch string, err error) {
+	// Pattern to match pipeline URLs (with or without /builds and query string)
+	pattern := `https://buildkite\.com/([^/]+)/([^/?]+)(?:/builds)?(?:\?.*)?$`
+	re := regexp.MustCompile(pattern)
+
+	matches := re.FindStringSubmatch(pipelineURL)
+	if len(matches) < 3 {
+		return "", "", "", fmt.Errorf("invalid Buildkite pipeline URL format: %s", pipelineURL)
+	}
+
+	org = matches[1]
+	pipeline = matches[2]
+
+	// Extract branch from query string if present
+	if idx := strings.Index(pipelineURL, "?"); idx != -1 {
+		queryString := pipelineURL[idx+1:]
+		for _, param := range strings.Split(queryString, "&") {
+			if strings.HasPrefix(param, "branch=") {
+				branch = strings.TrimPrefix(param, "branch=")
+				break
+			}
+		}
+	}
+
+	return org, pipeline, branch, nil
+}
+
 // GetJobLog fetches the raw log content for a specific job.
 // Deprecated: Use GetJobLogByURL instead with the raw_log_url from the job metadata.
 func (c *Client) GetJobLog(ctx context.Context, jobID string) (string, error) {

@@ -130,6 +130,28 @@ func (a *ArtifactAgent) processRequest(ctx context.Context, msg broker.Message) 
 	buildNumber := parseBuildNumber(build.Number)
 
 	debugLog("Processing %d jobs for pipeline %s build %d", len(build.Jobs), pipelineID, buildNumber)
+
+	// Check if we already have test results for this build in SQLite
+	if a.history != nil {
+		hasBuild, err := a.history.HasBuild(ctx, pipelineID, buildNumber)
+		if err != nil {
+			debugLog("Warning: failed to check for existing build results: %v", err)
+		} else if hasBuild {
+			debugLog("Build %d already in database, loading from cache", buildNumber)
+			a.logger.Info("[ArtifactAgent] Build %d already cached, loading %s results from database",
+				buildNumber, pipelineID)
+
+			// Load and publish cached results
+			if err := a.publishCachedResults(ctx, request.RequestID, pipelineID, buildNumber, request.BuildURL); err != nil {
+				a.logger.Error("[ArtifactAgent] Failed to publish cached results: %v", err)
+				// Fall through to fetch artifacts
+			} else {
+				debugLog("Successfully published cached results for build %d", buildNumber)
+				return nil
+			}
+		}
+	}
+
 	a.logger.Info("[ArtifactAgent] Fetching artifacts for %d jobs (pipeline: %s, build: %d)",
 		len(build.Jobs), pipelineID, buildNumber)
 
@@ -203,6 +225,51 @@ func (a *ArtifactAgent) publishWarning(ctx context.Context, requestID, warning s
 	if err := a.broker.Publish(ctx, contracts.TopicProgress, requestID, data); err != nil {
 		a.logger.Error("[ArtifactAgent] Failed to publish warning: %v", err)
 	}
+}
+
+// publishCachedResults loads test results from SQLite and publishes them to the broker.
+func (a *ArtifactAgent) publishCachedResults(ctx context.Context, requestID, pipelineID string, buildNumber int, buildURL string) error {
+	results, err := a.history.GetBuildResults(ctx, pipelineID, buildNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get cached results: %w", err)
+	}
+
+	debugLog("Publishing %d cached test results for build %d", len(results), buildNumber)
+
+	// Publish progress
+	a.publishProgress(ctx, requestID, "Loading cached test results", 0, 1)
+
+	// Publish each result to the broker
+	for _, r := range results {
+		testResult := contracts.TestResult{
+			RequestID:      requestID,
+			PipelineID:     pipelineID,
+			BuildNumber:    buildNumber,
+			BuildURL:       buildURL,
+			JobName:        "", // Not stored in SQLite
+			TestName:       r.TestName,
+			ClassName:      "", // Not stored in SQLite
+			Passed:         r.Passed,
+			FailureMessage: r.FailureMessage,
+			Duration:       0, // Not stored in SQLite
+		}
+
+		data, err := json.Marshal(testResult)
+		if err != nil {
+			a.logger.Error("[ArtifactAgent] Failed to marshal cached test result: %v", err)
+			continue
+		}
+
+		if err := a.broker.Publish(ctx, contracts.TopicTestResults, requestID, data); err != nil {
+			a.logger.Error("[ArtifactAgent] Failed to publish cached test result: %v", err)
+		}
+	}
+
+	// Mark progress complete
+	a.publishProgress(ctx, requestID, "Loading cached test results", 1, 1)
+
+	a.logger.Info("[ArtifactAgent] Published %d cached test results for build %d", len(results), buildNumber)
+	return nil
 }
 
 // processJobArtifacts fetches and parses artifacts for a single job.

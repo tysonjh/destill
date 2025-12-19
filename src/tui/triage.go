@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -271,6 +272,13 @@ func StartWithChannels(channels *BrokerChannels, initialCards []contracts.Triage
 	}
 
 	header := initializeHeader(styles, state, status)
+
+	// Extract build number from initial cards if available
+	if len(initialCards) > 0 && initialCards[0].BuildURL != "" {
+		if buildNum := extractBuildNumber(initialCards[0].BuildURL); buildNum != "" {
+			header.SetBuildNumber(buildNum)
+		}
+	}
 	listView := initializeListView(state)
 
 	// Get tier counts for header
@@ -481,6 +489,13 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cardReceivedMsg:
 		// New card arrived from broker - include all cards (low confidence shown dimmed)
 		m.cardCount++
+
+		// Extract build number from first card
+		if m.cardCount == 1 && msg.card.BuildURL != "" {
+			if buildNum := extractBuildNumber(msg.card.BuildURL); buildNum != "" {
+				m.header.SetBuildNumber(buildNum)
+			}
+		}
 
 		// Track low confidence count for display
 		if msg.card.ConfidenceScore < ConfidenceThreshold {
@@ -790,4 +805,22 @@ func (m *MainModel) updateTestSummary() {
 
 	m.summaryModel.SetTestSummary(summary)
 	m.testsModel.SetTestData(summary, m.testResults)
+}
+
+// extractBuildNumber extracts the build number from a CI build URL.
+// Supports Buildkite and GitHub Actions URL formats.
+func extractBuildNumber(buildURL string) string {
+	// Buildkite: https://buildkite.com/org/pipeline/builds/123
+	buildkitePattern := regexp.MustCompile(`/builds/(\d+)`)
+	if matches := buildkitePattern.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// GitHub Actions: https://github.com/owner/repo/actions/runs/123456
+	githubPattern := regexp.MustCompile(`/actions/runs/(\d+)`)
+	if matches := githubPattern.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	return ""
 }

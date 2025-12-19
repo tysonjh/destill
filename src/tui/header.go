@@ -15,6 +15,7 @@ type JobInfo struct {
 // Header represents the top status bar component.
 type Header struct {
 	projectStatus      string
+	buildNumber        string // Build number being analyzed
 	selectedFilter     string // Formatted display string
 	rawFilterName      string // Raw filter name for comparison
 	availableJobs      []JobInfo
@@ -157,6 +158,11 @@ func (h *Header) SetViewMode(mode ViewMode) {
 	h.viewMode = mode
 }
 
+// SetBuildNumber updates the build number display
+func (h *Header) SetBuildNumber(number string) {
+	h.buildNumber = number
+}
+
 // AddJob adds a new job to the available jobs list
 func (h *Header) AddJob(jobName string, failed bool) {
 	// Check if already exists - if so, update failed status
@@ -205,7 +211,12 @@ func (h Header) Render(width int) string {
 		Bold(true).
 		Padding(0, 2)
 
-	status := statusStyle.Render(h.projectStatus)
+	// Include build number if available
+	statusText := h.projectStatus
+	if h.buildNumber != "" {
+		statusText = fmt.Sprintf("%s #%s", h.projectStatus, h.buildNumber)
+	}
+	status := statusStyle.Render(statusText)
 
 	// Pending indicator (shows when new cards waiting)
 	var pending string

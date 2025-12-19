@@ -275,6 +275,82 @@ func (th *TestHistory) GetAllTestStats(ctx context.Context, pipelineID string, w
 	return allStats, nil
 }
 
+// GetProcessedBuilds returns a set of build numbers that have been processed for a pipeline.
+func (th *TestHistory) GetProcessedBuilds(ctx context.Context, pipelineID string) (map[int]bool, error) {
+	query := `SELECT DISTINCT build_number FROM test_results WHERE pipeline_id = ?`
+
+	rows, err := th.db.QueryContext(ctx, query, pipelineID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query processed builds: %w", err)
+	}
+	defer rows.Close()
+
+	processed := make(map[int]bool)
+	for rows.Next() {
+		var buildNumber int
+		if err := rows.Scan(&buildNumber); err != nil {
+			return nil, fmt.Errorf("failed to scan build number: %w", err)
+		}
+		processed[buildNumber] = true
+	}
+
+	return processed, rows.Err()
+}
+
+// HasBuild checks if test results exist for a specific build.
+func (th *TestHistory) HasBuild(ctx context.Context, pipelineID string, buildNumber int) (bool, error) {
+	query := `SELECT COUNT(*) FROM test_results WHERE pipeline_id = ? AND build_number = ? LIMIT 1`
+
+	var count int
+	err := th.db.QueryRowContext(ctx, query, pipelineID, buildNumber).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check build: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// GetBuildResults retrieves all test results for a specific build.
+func (th *TestHistory) GetBuildResults(ctx context.Context, pipelineID string, buildNumber int) ([]TestResult, error) {
+	query := `
+	SELECT id, pipeline_id, test_name, build_number, passed, failure_message, build_url, created_at
+	FROM test_results
+	WHERE pipeline_id = ? AND build_number = ?
+	`
+
+	rows, err := th.db.QueryContext(ctx, query, pipelineID, buildNumber)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query build results: %w", err)
+	}
+	defer rows.Close()
+
+	var results []TestResult
+	for rows.Next() {
+		var r TestResult
+		var passed int
+		var createdAtStr string
+		var failureMsg, buildURL sql.NullString
+
+		err := rows.Scan(&r.ID, &r.PipelineID, &r.TestName, &r.BuildNumber,
+			&passed, &failureMsg, &buildURL, &createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		r.Passed = passed == 1
+		if failureMsg.Valid {
+			r.FailureMessage = failureMsg.String
+		}
+		if buildURL.Valid {
+			r.BuildURL = buildURL.String
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		results = append(results, r)
+	}
+
+	return results, rows.Err()
+}
+
 // Close closes the database connection.
 func (th *TestHistory) Close() error {
 	return th.db.Close()

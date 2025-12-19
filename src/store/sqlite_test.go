@@ -383,3 +383,60 @@ func TestCreatedAt(t *testing.T) {
 		t.Errorf("expected created_at %v, got %v", specificTime, results[0].CreatedAt)
 	}
 }
+
+func TestGetProcessedBuilds(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record some test results across different builds
+	results := []TestResult{
+		{PipelineID: "org/pipeline", TestName: "test1", BuildNumber: 100, Passed: true},
+		{PipelineID: "org/pipeline", TestName: "test2", BuildNumber: 100, Passed: false},
+		{PipelineID: "org/pipeline", TestName: "test1", BuildNumber: 101, Passed: true},
+		{PipelineID: "org/pipeline", TestName: "test1", BuildNumber: 102, Passed: true},
+		{PipelineID: "other/pipeline", TestName: "test1", BuildNumber: 100, Passed: true},
+	}
+
+	for _, r := range results {
+		if err := th.RecordResult(ctx, r); err != nil {
+			t.Fatalf("failed to record result: %v", err)
+		}
+	}
+
+	// Get processed builds for org/pipeline
+	processed, err := th.GetProcessedBuilds(ctx, "org/pipeline")
+	if err != nil {
+		t.Fatalf("failed to get processed builds: %v", err)
+	}
+
+	// Should have builds 100, 101, 102
+	if len(processed) != 3 {
+		t.Errorf("expected 3 processed builds, got %d", len(processed))
+	}
+
+	if !processed[100] || !processed[101] || !processed[102] {
+		t.Errorf("expected builds 100, 101, 102 to be processed, got %v", processed)
+	}
+
+	// Should not include build 100 from other/pipeline
+	processedOther, err := th.GetProcessedBuilds(ctx, "other/pipeline")
+	if err != nil {
+		t.Fatalf("failed to get processed builds: %v", err)
+	}
+
+	if len(processedOther) != 1 {
+		t.Errorf("expected 1 processed build for other/pipeline, got %d", len(processedOther))
+	}
+
+	if !processedOther[100] {
+		t.Errorf("expected build 100 to be processed for other/pipeline")
+	}
+}
