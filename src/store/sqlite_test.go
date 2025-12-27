@@ -728,3 +728,102 @@ func TestGetTestFlakeInfo_ExactThreshold(t *testing.T) {
 		t.Errorf("expected FailureRate=0.1, got %f", info.FailureRate)
 	}
 }
+
+func TestRecordResult_JobName(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record a result with JobName
+	err = th.RecordResult(ctx, TestResult{
+		PipelineID:     "redpanda/redpanda",
+		TestName:       "test_with_job",
+		BuildNumber:    200,
+		Passed:         false,
+		FailureMessage: "test failed",
+		BuildURL:       "https://example.com/build/200",
+		JobName:        "ducktape-tests",
+	})
+	if err != nil {
+		t.Fatalf("failed to record result: %v", err)
+	}
+
+	// Retrieve and verify JobName is preserved
+	results, err := th.GetBuildResults(ctx, "redpanda/redpanda", 200)
+	if err != nil {
+		t.Fatalf("failed to get results: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	r := results[0]
+	if r.JobName != "ducktape-tests" {
+		t.Errorf("expected JobName='ducktape-tests', got '%s'", r.JobName)
+	}
+	if r.TestName != "test_with_job" {
+		t.Errorf("expected TestName='test_with_job', got '%s'", r.TestName)
+	}
+}
+
+func TestRecordResult_MultipleJobsSameTest(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record same test from different jobs in same build
+	// Note: SQLite UNIQUE constraint is on (pipeline_id, test_name, build_number)
+	// so only the last insert wins
+	err = th.RecordResult(ctx, TestResult{
+		PipelineID:  "org/pipeline",
+		TestName:    "shared_test",
+		BuildNumber: 300,
+		Passed:      false,
+		JobName:     "job-1",
+	})
+	if err != nil {
+		t.Fatalf("failed to record first result: %v", err)
+	}
+
+	// This will replace the previous one due to UNIQUE constraint
+	err = th.RecordResult(ctx, TestResult{
+		PipelineID:  "org/pipeline",
+		TestName:    "shared_test",
+		BuildNumber: 300,
+		Passed:      false,
+		JobName:     "job-2",
+	})
+	if err != nil {
+		t.Fatalf("failed to record second result: %v", err)
+	}
+
+	results, err := th.GetBuildResults(ctx, "org/pipeline", 300)
+	if err != nil {
+		t.Fatalf("failed to get results: %v", err)
+	}
+
+	// Should only have 1 result (last one wins)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	// Last job recorded should be preserved
+	if results[0].JobName != "job-2" {
+		t.Errorf("expected JobName='job-2', got '%s'", results[0].JobName)
+	}
+}

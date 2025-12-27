@@ -21,6 +21,7 @@ type TestResult struct {
 	Passed         bool
 	FailureMessage string
 	BuildURL       string
+	JobName        string
 	CreatedAt      time.Time
 }
 
@@ -70,21 +71,27 @@ func (th *TestHistory) migrate() error {
 		passed INTEGER NOT NULL,
 		failure_message TEXT,
 		build_url TEXT,
+		job_name TEXT,
 		created_at TEXT NOT NULL,
 		UNIQUE(pipeline_id, test_name, build_number)
 	);
 	CREATE INDEX IF NOT EXISTS idx_pipeline_test ON test_results(pipeline_id, test_name);
 	`
-	_, err := th.db.Exec(schema)
-	return err
+	if _, err := th.db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Add job_name column to existing tables (SQLite ignores if already exists)
+	th.db.Exec("ALTER TABLE test_results ADD COLUMN job_name TEXT")
+	return nil
 }
 
 // RecordResult stores a test result. Uses INSERT OR REPLACE to handle duplicates.
 func (th *TestHistory) RecordResult(ctx context.Context, result TestResult) error {
 	query := `
 	INSERT OR REPLACE INTO test_results
-		(pipeline_id, test_name, build_number, passed, failure_message, build_url, created_at)
-	VALUES (?, ?, ?, ?, ?, ?, ?)
+		(pipeline_id, test_name, build_number, passed, failure_message, build_url, job_name, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	passed := 0
 	if result.Passed {
@@ -102,6 +109,7 @@ func (th *TestHistory) RecordResult(ctx context.Context, result TestResult) erro
 		passed,
 		result.FailureMessage,
 		result.BuildURL,
+		result.JobName,
 		createdAt.Format(time.RFC3339),
 	)
 	return err
@@ -145,7 +153,7 @@ func (th *TestHistory) HasBuild(ctx context.Context, pipelineID string, buildNum
 // GetBuildResults retrieves all test results for a specific build.
 func (th *TestHistory) GetBuildResults(ctx context.Context, pipelineID string, buildNumber int) ([]TestResult, error) {
 	query := `
-	SELECT id, pipeline_id, test_name, build_number, passed, failure_message, build_url, created_at
+	SELECT id, pipeline_id, test_name, build_number, passed, failure_message, build_url, job_name, created_at
 	FROM test_results
 	WHERE pipeline_id = ? AND build_number = ?
 	`
@@ -161,10 +169,10 @@ func (th *TestHistory) GetBuildResults(ctx context.Context, pipelineID string, b
 		var r TestResult
 		var passed int
 		var createdAtStr string
-		var failureMsg, buildURL sql.NullString
+		var failureMsg, buildURL, jobName sql.NullString
 
 		err := rows.Scan(&r.ID, &r.PipelineID, &r.TestName, &r.BuildNumber,
-			&passed, &failureMsg, &buildURL, &createdAtStr)
+			&passed, &failureMsg, &buildURL, &jobName, &createdAtStr)
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
@@ -175,6 +183,9 @@ func (th *TestHistory) GetBuildResults(ctx context.Context, pipelineID string, b
 		}
 		if buildURL.Valid {
 			r.BuildURL = buildURL.String
+		}
+		if jobName.Valid {
+			r.JobName = jobName.String
 		}
 		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
 		results = append(results, r)

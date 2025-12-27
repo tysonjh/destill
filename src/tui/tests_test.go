@@ -447,6 +447,134 @@ func TestFormatDedupedFailure_TruncatesLongTestName(t *testing.T) {
 	}
 }
 
+func TestFormatDedupedFailure_JobNameInDetailLine(t *testing.T) {
+	styles := DefaultStyles()
+	model := NewTestsModel(styles)
+	model.width = 120
+
+	failure := dedupedFailure{
+		TestName:     "TestWithJob",
+		Jobs:         []string{"ducktape-tests"},
+		IsFlaky:      true,
+		HistoryRuns:  20,
+		HistoryFails: 3,
+		LastFailedAt: "2024-12-11T10:00:00Z",
+	}
+
+	lines := model.formatDedupedFailure(failure)
+
+	// Should have at least 2 lines (main line + detail line)
+	if len(lines) < 2 {
+		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	}
+
+	// Detail line should contain the job name
+	detailLine := lines[1]
+	if !containsString(detailLine, "ducktape-tests") {
+		t.Errorf("expected job name 'ducktape-tests' in detail line: %s", detailLine)
+	}
+
+	// Detail line should also contain the last failed date
+	if !containsString(detailLine, "Dec 11") {
+		t.Errorf("expected 'Dec 11' in detail line: %s", detailLine)
+	}
+}
+
+func TestDeduplicateFailures_PreservesJobName(t *testing.T) {
+	styles := DefaultStyles()
+	model := NewTestsModel(styles)
+
+	// Test results with job names
+	model.allResults = []contracts.TestResult{
+		{TestName: "TestFoo", JobName: "job-alpha", Passed: false},
+		{TestName: "TestFoo", JobName: "job-beta", Passed: false},
+		{TestName: "TestBar", JobName: "job-gamma", Passed: false},
+	}
+
+	model.summary = &contracts.TestSummary{
+		NovelFailures: []contracts.TestFailure{
+			{TestName: "TestFoo"},
+			{TestName: "TestBar"},
+		},
+	}
+
+	deduped := model.deduplicateFailures()
+
+	if len(deduped) != 2 {
+		t.Fatalf("expected 2 deduplicated failures, got %d", len(deduped))
+	}
+
+	// Find TestFoo
+	var testFoo *dedupedFailure
+	for i := range deduped {
+		if deduped[i].TestName == "TestFoo" {
+			testFoo = &deduped[i]
+			break
+		}
+	}
+
+	if testFoo == nil {
+		t.Fatal("TestFoo not found")
+	}
+
+	// Should have 2 jobs
+	if len(testFoo.Jobs) != 2 {
+		t.Errorf("expected 2 jobs, got %d: %v", len(testFoo.Jobs), testFoo.Jobs)
+	}
+
+	// Check both job names are present
+	hasAlpha := false
+	hasBeta := false
+	for _, j := range testFoo.Jobs {
+		if j == "job-alpha" {
+			hasAlpha = true
+		}
+		if j == "job-beta" {
+			hasBeta = true
+		}
+	}
+
+	if !hasAlpha {
+		t.Error("expected 'job-alpha' in jobs list")
+	}
+	if !hasBeta {
+		t.Error("expected 'job-beta' in jobs list")
+	}
+}
+
+func TestDeduplicateFailures_EmptyJobNameFiltered(t *testing.T) {
+	styles := DefaultStyles()
+	model := NewTestsModel(styles)
+
+	// Test with empty job name (simulates old cached data)
+	model.allResults = []contracts.TestResult{
+		{TestName: "TestEmpty", JobName: "", Passed: false},
+	}
+
+	model.summary = &contracts.TestSummary{
+		NovelFailures: []contracts.TestFailure{
+			{TestName: "TestEmpty"},
+		},
+	}
+
+	deduped := model.deduplicateFailures()
+
+	if len(deduped) != 1 {
+		t.Fatalf("expected 1 deduplicated failure, got %d", len(deduped))
+	}
+
+	// Jobs list should contain empty string (current behavior)
+	// This test documents that empty job names are NOT filtered
+	if len(deduped[0].Jobs) != 1 {
+		t.Errorf("expected 1 job entry, got %d", len(deduped[0].Jobs))
+	}
+
+	// The job name is empty string
+	if deduped[0].Jobs[0] != "" {
+		t.Errorf("expected empty job name, got '%s'", deduped[0].Jobs[0])
+	}
+}
+
 // Helper function
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||

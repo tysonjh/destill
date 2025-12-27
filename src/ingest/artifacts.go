@@ -232,7 +232,7 @@ func (a *ArtifactAgent) publishCachedResults(ctx context.Context, requestID, pip
 			PipelineID:     pipelineID,
 			BuildNumber:    buildNumber,
 			BuildURL:       buildURL,
-			JobName:        "", // Not stored in SQLite
+			JobName:        r.JobName,
 			TestName:       r.TestName,
 			ClassName:      "", // Not stored in SQLite
 			Passed:         r.Passed,
@@ -353,6 +353,7 @@ func (a *ArtifactAgent) processJobArtifacts(
 					Passed:         result.Passed,
 					FailureMessage: result.FailureMessage,
 					BuildURL:       buildURL,
+					JobName:        job.Name,
 					CreatedAt:      time.Now().UTC(),
 				}
 				if err := a.history.RecordResult(ctx, historyResult); err != nil {
@@ -470,6 +471,7 @@ func ProcessArtifactsForBuild(
 						Passed:         result.Passed,
 						FailureMessage: result.FailureMessage,
 						BuildURL:       buildURL,
+						JobName:        job.Name,
 						CreatedAt:      time.Now().UTC(),
 					}
 					history.RecordResult(ctx, historyResult)
