@@ -816,7 +816,7 @@ func (m *MainModel) updateSummaryData() {
 	}
 	m.summaryModel.SetJobCounts(failedJobs, passedJobs, otherJobs)
 
-	// Use authoritative build metadata if available
+	// Use authoritative build metadata if available, otherwise unknown
 	if m.buildMetadata != nil {
 		m.summaryModel.SetBuildInfo(m.buildMetadata.State, m.buildMetadata.Number, m.buildMetadata.URL)
 		m.summaryModel.SetBuildMetadata(
@@ -827,12 +827,8 @@ func (m *MainModel) updateSummaryData() {
 			m.buildMetadata.Duration,
 		)
 	} else {
-		// Fall back to inferred status from jobs
-		status := "passed"
-		if failedJobs > 0 {
-			status = "failed"
-		}
-		m.summaryModel.SetBuildInfo(status, "", "")
+		// No authoritative metadata - status is unknown
+		m.summaryModel.SetBuildInfo("unknown", "", "")
 	}
 }
 

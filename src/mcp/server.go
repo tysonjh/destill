@@ -215,11 +215,6 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	var testSummary *contracts.TestSummary
 	if len(testResults) > 0 {
 		testSummary = buildTestSummary(requestID, testResults)
-
-		// Update build status if tests failed
-		if testSummary != nil && testSummary.FailedCount > 0 {
-			buildInfo.Status = "failed"
-		}
 	}
 
 	return cards, buildInfo, testSummary, nil
@@ -266,13 +261,9 @@ func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh, m
 	}
 }
 
-// buildInfoFromMetadata creates BuildInfo from authoritative metadata, falling back to card extraction.
+// buildInfoFromMetadata creates BuildInfo from authoritative metadata.
+// Returns "unknown" status if metadata is not available.
 func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.TriageCard, url string) BuildInfo {
-	// Fall back to card-based extraction if no metadata
-	if meta == nil {
-		return extractBuildInfo(cards, url)
-	}
-
 	// Extract job counts from cards (metadata doesn't have per-job info)
 	failedJobs := make(map[string]bool)
 	passedJobs := make(map[string]bool)
@@ -296,6 +287,18 @@ func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.Tria
 		failed = append(failed, job)
 	}
 
+	// Return unknown status if no authoritative metadata
+	if meta == nil {
+		return BuildInfo{
+			URL:             url,
+			Status:          "unknown",
+			FailedJobs:      failed,
+			PassedJobsCount: len(passedJobs),
+			OtherJobsCount:  len(otherJobs),
+			Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+
 	return BuildInfo{
 		URL:             meta.URL,
 		Number:          meta.Number,
@@ -311,46 +314,6 @@ func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.Tria
 		PassedJobsCount: len(passedJobs),
 		OtherJobsCount:  len(otherJobs),
 		Timestamp:       meta.Timestamp,
-	}
-}
-
-// extractBuildInfo extracts build metadata from cards.
-func extractBuildInfo(cards []contracts.TriageCard, url string) BuildInfo {
-	failedJobs := make(map[string]bool)
-	passedJobs := make(map[string]bool)
-	otherJobs := make(map[string]bool)
-
-	for _, card := range cards {
-		switch card.Metadata["job_state"] {
-		case "failed":
-			failedJobs[card.JobName] = true
-		case "passed":
-			passedJobs[card.JobName] = true
-		case "":
-			// Skip cards without job_state metadata
-		default:
-			// Track canceled, skipped, in_progress, etc.
-			otherJobs[card.JobName] = true
-		}
-	}
-
-	var failed []string
-	for job := range failedJobs {
-		failed = append(failed, job)
-	}
-
-	status := "passed"
-	if len(failed) > 0 {
-		status = "failed"
-	}
-
-	return BuildInfo{
-		URL:             url,
-		Status:          status,
-		FailedJobs:      failed,
-		PassedJobsCount: len(passedJobs),
-		OtherJobsCount:  len(otherJobs),
-		Timestamp:       time.Now().UTC().Format(time.RFC3339),
 	}
 }
 
