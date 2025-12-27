@@ -107,174 +107,6 @@ func (th *TestHistory) RecordResult(ctx context.Context, result TestResult) erro
 	return err
 }
 
-// RecordResults stores multiple test results in a single transaction.
-func (th *TestHistory) RecordResults(ctx context.Context, results []TestResult) error {
-	tx, err := th.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `
-		INSERT OR REPLACE INTO test_results
-			(pipeline_id, test_name, build_number, passed, failure_message, build_url, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, result := range results {
-		passed := 0
-		if result.Passed {
-			passed = 1
-		}
-		createdAt := result.CreatedAt
-		if createdAt.IsZero() {
-			createdAt = time.Now().UTC()
-		}
-
-		_, err := stmt.ExecContext(ctx,
-			result.PipelineID,
-			result.TestName,
-			result.BuildNumber,
-			passed,
-			result.FailureMessage,
-			result.BuildURL,
-			createdAt.Format(time.RFC3339),
-		)
-		if err != nil {
-			return fmt.Errorf("failed to insert result for %s: %w", result.TestName, err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-// GetRecentResults retrieves the last N results for a specific test.
-func (th *TestHistory) GetRecentResults(ctx context.Context, pipelineID, testName string, limit int) ([]TestResult, error) {
-	query := `
-	SELECT id, pipeline_id, test_name, build_number, passed, failure_message, build_url, created_at
-	FROM test_results
-	WHERE pipeline_id = ? AND test_name = ?
-	ORDER BY build_number DESC
-	LIMIT ?
-	`
-
-	rows, err := th.db.QueryContext(ctx, query, pipelineID, testName, limit)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query results: %w", err)
-	}
-	defer rows.Close()
-
-	var results []TestResult
-	for rows.Next() {
-		var r TestResult
-		var passed int
-		var createdAtStr string
-		var failureMsg, buildURL sql.NullString
-
-		err := rows.Scan(&r.ID, &r.PipelineID, &r.TestName, &r.BuildNumber,
-			&passed, &failureMsg, &buildURL, &createdAtStr)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan row: %w", err)
-		}
-
-		r.Passed = passed == 1
-		if failureMsg.Valid {
-			r.FailureMessage = failureMsg.String
-		}
-		if buildURL.Valid {
-			r.BuildURL = buildURL.String
-		}
-		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
-		results = append(results, r)
-	}
-
-	return results, rows.Err()
-}
-
-// TestStats holds pass/fail statistics for a test.
-type TestStats struct {
-	TestName    string
-	TotalRuns   int
-	FailedRuns  int
-	FailureRate float64
-}
-
-// GetTestStats returns pass/fail stats for a test over the last N builds.
-func (th *TestHistory) GetTestStats(ctx context.Context, pipelineID, testName string, windowSize int) (TestStats, error) {
-	query := `
-	SELECT passed, COUNT(*) as cnt
-	FROM (
-		SELECT passed
-		FROM test_results
-		WHERE pipeline_id = ? AND test_name = ?
-		ORDER BY build_number DESC
-		LIMIT ?
-	)
-	GROUP BY passed
-	`
-
-	rows, err := th.db.QueryContext(ctx, query, pipelineID, testName, windowSize)
-	if err != nil {
-		return TestStats{}, fmt.Errorf("failed to query stats: %w", err)
-	}
-	defer rows.Close()
-
-	stats := TestStats{TestName: testName}
-	for rows.Next() {
-		var passed, count int
-		if err := rows.Scan(&passed, &count); err != nil {
-			return TestStats{}, fmt.Errorf("failed to scan row: %w", err)
-		}
-		stats.TotalRuns += count
-		if passed == 0 {
-			stats.FailedRuns = count
-		}
-	}
-
-	if stats.TotalRuns > 0 {
-		stats.FailureRate = float64(stats.FailedRuns) / float64(stats.TotalRuns)
-	}
-
-	return stats, rows.Err()
-}
-
-// GetAllTestStats returns stats for all tests in a pipeline over the last N builds.
-func (th *TestHistory) GetAllTestStats(ctx context.Context, pipelineID string, windowSize int) ([]TestStats, error) {
-	// First get all unique test names for this pipeline
-	namesQuery := `SELECT DISTINCT test_name FROM test_results WHERE pipeline_id = ?`
-	rows, err := th.db.QueryContext(ctx, namesQuery, pipelineID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query test names: %w", err)
-	}
-
-	var testNames []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("failed to scan test name: %w", err)
-		}
-		testNames = append(testNames, name)
-	}
-	rows.Close()
-
-	// Get stats for each test
-	var allStats []TestStats
-	for _, name := range testNames {
-		stats, err := th.GetTestStats(ctx, pipelineID, name, windowSize)
-		if err != nil {
-			return nil, err
-		}
-		allStats = append(allStats, stats)
-	}
-
-	return allStats, nil
-}
-
 // GetProcessedBuilds returns a set of build numbers that have been processed for a pipeline.
 func (th *TestHistory) GetProcessedBuilds(ctx context.Context, pipelineID string) (map[int]bool, error) {
 	query := `SELECT DISTINCT build_number FROM test_results WHERE pipeline_id = ?`
@@ -354,4 +186,84 @@ func (th *TestHistory) GetBuildResults(ctx context.Context, pipelineID string, b
 // Close closes the database connection.
 func (th *TestHistory) Close() error {
 	return th.db.Close()
+}
+
+// Flaky detection constants
+const (
+	// FlakeWindowSize is the number of recent builds to consider for flakiness.
+	FlakeWindowSize = 20
+
+	// FlakeThreshold is the minimum failure rate to consider a test flaky.
+	// 0.10 = 10% of runs failed = flaky
+	FlakeThreshold = 0.10
+
+	// FlakeMinSamples is the minimum number of runs required to make a judgment.
+	FlakeMinSamples = 5
+)
+
+// TestFlakeInfo contains flakiness information for a test.
+type TestFlakeInfo struct {
+	IsFlaky      bool
+	FailureRate  float64
+	TotalRuns    int
+	FailedRuns   int
+	LastFailedAt time.Time // Most recent failure time (zero if never failed)
+}
+
+// GetTestFlakeInfo checks if a specific test is flaky based on historical data.
+// Excludes the current build from the calculation.
+func (th *TestHistory) GetTestFlakeInfo(ctx context.Context, pipelineID, testName string, excludeBuild int) (TestFlakeInfo, error) {
+	query := `
+	SELECT passed, created_at
+	FROM (
+		SELECT passed, build_number, created_at
+		FROM test_results
+		WHERE pipeline_id = ? AND test_name = ? AND build_number != ?
+		ORDER BY build_number DESC
+		LIMIT ?
+	)
+	`
+
+	rows, err := th.db.QueryContext(ctx, query, pipelineID, testName, excludeBuild, FlakeWindowSize)
+	if err != nil {
+		return TestFlakeInfo{}, fmt.Errorf("failed to query test history: %w", err)
+	}
+	defer rows.Close()
+
+	var totalRuns, failedRuns int
+	var lastFailedAt time.Time
+	for rows.Next() {
+		var passed int
+		var createdAtStr string
+		if err := rows.Scan(&passed, &createdAtStr); err != nil {
+			return TestFlakeInfo{}, fmt.Errorf("failed to scan row: %w", err)
+		}
+		totalRuns++
+		if passed == 0 {
+			failedRuns++
+			// Track most recent failure (first one we see since ordered by build_number DESC)
+			if lastFailedAt.IsZero() {
+				lastFailedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+			}
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return TestFlakeInfo{}, err
+	}
+
+	info := TestFlakeInfo{
+		TotalRuns:    totalRuns,
+		FailedRuns:   failedRuns,
+		LastFailedAt: lastFailedAt,
+	}
+
+	if totalRuns > 0 {
+		info.FailureRate = float64(failedRuns) / float64(totalRuns)
+	}
+
+	// Flaky if: enough samples AND failure rate exceeds threshold
+	info.IsFlaky = totalRuns >= FlakeMinSamples && info.FailureRate >= FlakeThreshold
+
+	return info, nil
 }
