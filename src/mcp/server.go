@@ -211,6 +211,11 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	var testSummary *contracts.TestSummary
 	if len(testResults) > 0 {
 		testSummary = buildTestSummary(requestID, testResults)
+
+		// Update build status if tests failed
+		if testSummary != nil && testSummary.FailedCount > 0 {
+			buildInfo.Status = "failed"
+		}
 	}
 
 	return cards, buildInfo, testSummary, nil
@@ -299,6 +304,7 @@ func generateRequestID() string {
 }
 
 // buildTestSummary creates a TestSummary from collected test results.
+// Uses test history to classify failures as novel vs flaky.
 func buildTestSummary(requestID string, results []contracts.TestResult) *contracts.TestSummary {
 	if len(results) == 0 {
 		return nil
@@ -314,19 +320,55 @@ func buildTestSummary(requestID string, results []contracts.TestResult) *contrac
 		summary.BuildNumber = results[0].BuildNumber
 	}
 
-	// Count pass/fail
+	// Open test history for flaky detection
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		// If we can't open history, fall back to marking all as novel
+		history = nil
+	}
+	if history != nil {
+		defer history.Close()
+	}
+
+	ctx := context.Background()
+
+	// Count pass/fail and classify failures
 	for _, r := range results {
 		summary.TotalTests++
 		if r.Passed {
 			summary.PassedCount++
 		} else {
 			summary.FailedCount++
-			// Add to failures list
+
 			failure := contracts.TestFailure{
 				TestName:       r.TestName,
 				FailureMessage: r.FailureMessage,
 			}
-			summary.NovelFailures = append(summary.NovelFailures, failure)
+
+			// Check test history for flakiness and last failure info
+			isFlaky := false
+			if history != nil {
+				flakeInfo, err := history.GetTestFlakeInfo(ctx, summary.PipelineID, r.TestName, summary.BuildNumber)
+				if err == nil {
+					// Always capture last failure date if available
+					if !flakeInfo.LastFailedAt.IsZero() {
+						failure.LastFailedAt = flakeInfo.LastFailedAt.Format(time.RFC3339)
+					}
+					// Mark as flaky if it meets the criteria
+					if flakeInfo.IsFlaky {
+						isFlaky = true
+						failure.IsFlaky = true
+						failure.HistoryRuns = flakeInfo.TotalRuns
+						failure.HistoryFails = flakeInfo.FailedRuns
+					}
+				}
+			}
+
+			if isFlaky {
+				summary.FlakyFailures = append(summary.FlakyFailures, failure)
+			} else {
+				summary.NovelFailures = append(summary.NovelFailures, failure)
+			}
 		}
 	}
 

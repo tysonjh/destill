@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -103,7 +104,9 @@ type dedupedFailure struct {
 	FailureMessage string
 	Jobs           []string
 	IsFlaky        bool
-	FailureRate    float64
+	HistoryRuns    int    // Total runs in history window
+	HistoryFails   int    // Failed runs in history window
+	LastFailedAt   string // RFC3339 timestamp of last failure
 }
 
 func (m *TestsModel) updateContent() {
@@ -188,6 +191,18 @@ func (m *TestsModel) updateContent() {
 
 // deduplicateFailures groups test failures by test name and collects job info
 func (m *TestsModel) deduplicateFailures() []dedupedFailure {
+	// Build maps of test failure info from the summary
+	flakyTests := make(map[string]contracts.TestFailure)
+	novelTests := make(map[string]contracts.TestFailure)
+	if m.summary != nil {
+		for _, f := range m.summary.FlakyFailures {
+			flakyTests[f.TestName] = f
+		}
+		for _, f := range m.summary.NovelFailures {
+			novelTests[f.TestName] = f
+		}
+	}
+
 	// Map test name -> dedupedFailure
 	byName := make(map[string]*dedupedFailure)
 
@@ -209,12 +224,28 @@ func (m *TestsModel) deduplicateFailures() []dedupedFailure {
 				existing.Jobs = append(existing.Jobs, result.JobName)
 			}
 		} else {
+			// Get test info from flaky or novel lists
+			isFlaky := false
+			historyRuns := 0
+			historyFails := 0
+			lastFailedAt := ""
+			if flakyInfo, ok := flakyTests[result.TestName]; ok {
+				isFlaky = true
+				historyRuns = flakyInfo.HistoryRuns
+				historyFails = flakyInfo.HistoryFails
+				lastFailedAt = flakyInfo.LastFailedAt
+			} else if novelInfo, ok := novelTests[result.TestName]; ok {
+				lastFailedAt = novelInfo.LastFailedAt
+			}
+
 			byName[result.TestName] = &dedupedFailure{
 				TestName:       result.TestName,
 				FailureMessage: result.FailureMessage,
 				Jobs:           []string{result.JobName},
-				IsFlaky:        false, // TODO: integrate with flaky detection
-				FailureRate:    0,
+				IsFlaky:        isFlaky,
+				HistoryRuns:    historyRuns,
+				HistoryFails:   historyFails,
+				LastFailedAt:   lastFailedAt,
 			}
 		}
 	}
@@ -253,77 +284,53 @@ func (m *TestsModel) formatDedupedFailure(f dedupedFailure) []string {
 		testName = "..." + testName[len(testName)-maxNameLen+3:]
 	}
 
-	// Main line: [NOVEL] TestName (failed in X jobs)
-	jobInfo := fmt.Sprintf("(failed in %d job", len(f.Jobs))
-	if len(f.Jobs) != 1 {
-		jobInfo += "s"
+	// Build info string based on whether test is flaky
+	var infoStr string
+	if f.IsFlaky && f.HistoryRuns > 0 {
+		// Calculate failure rate from history
+		failureRate := float64(f.HistoryFails) / float64(f.HistoryRuns) * 100
+		infoStr = fmt.Sprintf("(%.0f%% over last %d runs)", failureRate, f.HistoryRuns)
+	} else {
+		// Novel test - just show job count
+		infoStr = fmt.Sprintf("(failed in %d job", len(f.Jobs))
+		if len(f.Jobs) != 1 {
+			infoStr += "s"
+		}
+		infoStr += ")"
 	}
-	jobInfo += ")"
 
 	mainLine := fmt.Sprintf("%s %s %s",
 		labelStyle.Render(label),
 		nameStyle.Render(testName),
-		jobStyle.Render(jobInfo),
+		jobStyle.Render(infoStr),
 	)
 	lines = append(lines, mainLine)
 
-	// Job names on next line, indented
+	// Build detail line with jobs and last failed date
+	var detailParts []string
+
+	// Job names
 	if len(f.Jobs) > 0 {
 		jobNames := strings.Join(f.Jobs, ", ")
-		if len(jobNames) > m.width-10 {
-			jobNames = jobNames[:m.width-13] + "..."
+		maxJobLen := m.width - 30
+		if maxJobLen > 0 && len(jobNames) > maxJobLen {
+			jobNames = jobNames[:maxJobLen-3] + "..."
 		}
-		lines = append(lines, jobStyle.Render("    └─ "+jobNames))
+		detailParts = append(detailParts, jobNames)
+	}
+
+	// Last failed date
+	if f.LastFailedAt != "" {
+		if t, err := time.Parse(time.RFC3339, f.LastFailedAt); err == nil {
+			detailParts = append(detailParts, fmt.Sprintf("last failed %s", t.Format("Jan 2")))
+		}
+	}
+
+	if len(detailParts) > 0 {
+		lines = append(lines, jobStyle.Render("    └─ "+strings.Join(detailParts, " | ")))
 	}
 
 	return lines
-}
-
-func (m *TestsModel) formatTestFailure(f contracts.TestFailure, isFlaky bool) string {
-	// Format: [NOVEL] or [FLAKY] + test name + failure rate
-	var labelStyle lipgloss.Style
-	var label string
-
-	if isFlaky {
-		labelStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("#FFA500"))
-		label = "[FLAKY]"
-	} else {
-		labelStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(m.styles.Tier1Color)
-		label = "[NOVEL]"
-	}
-
-	nameStyle := lipgloss.NewStyle().
-		Foreground(m.styles.TextPrimary)
-
-	rateStyle := lipgloss.NewStyle().
-		Foreground(m.styles.TextSecondary)
-
-	// Calculate rate string
-	rateStr := ""
-	if f.FailureRate > 0 {
-		// Estimate failures out of 20 runs
-		failed := int(f.FailureRate*20 + 0.5)
-		rateStr = fmt.Sprintf("(%d/20 failures)", failed)
-	} else if !isFlaky {
-		rateStr = "(first failure)"
-	}
-
-	// Truncate test name if too long
-	testName := f.TestName
-	maxNameLen := m.width - 30
-	if maxNameLen > 10 && len(testName) > maxNameLen {
-		testName = "..." + testName[len(testName)-maxNameLen+3:]
-	}
-
-	return fmt.Sprintf("%s %s %s",
-		labelStyle.Render(label),
-		nameStyle.Render(testName),
-		rateStyle.Render(rateStr),
-	)
 }
 
 // HasTestFailures returns true if there are any test failures.

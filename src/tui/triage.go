@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,7 @@ import (
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 	"destill-agent/src/ranking"
+	"destill-agent/src/store"
 )
 
 // LoadStatus represents the current loading state of the TUI
@@ -780,27 +782,74 @@ func (m *MainModel) updateTestSummary() {
 		return
 	}
 
-	// Count passed/failed
+	// Get pipeline info from first result
+	pipelineID := ""
+	buildNumber := 0
+	if len(m.testResults) > 0 {
+		pipelineID = m.testResults[0].PipelineID
+		buildNumber = m.testResults[0].BuildNumber
+	}
+
+	// Open test history for flaky detection
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		history = nil
+	}
+	if history != nil {
+		defer history.Close()
+	}
+
+	ctx := context.Background()
+
+	// Count passed/failed and classify failures
 	passed := 0
-	var failures []contracts.TestFailure
+	var novelFailures []contracts.TestFailure
+	var flakyFailures []contracts.TestFailure
+
 	for _, result := range m.testResults {
 		if result.Passed {
 			passed++
 		} else {
-			failures = append(failures, contracts.TestFailure{
+			failure := contracts.TestFailure{
 				TestName:       result.TestName,
 				FailureMessage: result.FailureMessage,
-				FailureRate:    0, // TODO: integrate with flaky detection
-				IsFlaky:        false,
-			})
+			}
+
+			// Check test history for flakiness and last failure info
+			isFlaky := false
+			if history != nil && pipelineID != "" {
+				flakeInfo, err := history.GetTestFlakeInfo(ctx, pipelineID, result.TestName, buildNumber)
+				if err == nil {
+					// Always capture last failure date if available
+					if !flakeInfo.LastFailedAt.IsZero() {
+						failure.LastFailedAt = flakeInfo.LastFailedAt.Format(time.RFC3339)
+					}
+					// Mark as flaky if it meets the criteria
+					if flakeInfo.IsFlaky {
+						isFlaky = true
+						failure.IsFlaky = true
+						failure.HistoryRuns = flakeInfo.TotalRuns
+						failure.HistoryFails = flakeInfo.FailedRuns
+					}
+				}
+			}
+
+			if isFlaky {
+				flakyFailures = append(flakyFailures, failure)
+			} else {
+				novelFailures = append(novelFailures, failure)
+			}
 		}
 	}
 
 	summary := &contracts.TestSummary{
+		PipelineID:    pipelineID,
+		BuildNumber:   buildNumber,
 		TotalTests:    len(m.testResults),
 		PassedCount:   passed,
-		FailedCount:   len(failures),
-		NovelFailures: failures, // For now, treat all failures as novel
+		FailedCount:   len(novelFailures) + len(flakyFailures),
+		NovelFailures: novelFailures,
+		FlakyFailures: flakyFailures,
 	}
 
 	m.summaryModel.SetTestSummary(summary)

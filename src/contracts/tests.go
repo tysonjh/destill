@@ -34,8 +34,10 @@ type TestSummary struct {
 
 // TestFailure represents a failed test with flakiness info.
 type TestFailure struct {
-	TestName       string  `json:"test_name"`
-	FailureMessage string  `json:"failure_message,omitempty"`
-	FailureRate    float64 `json:"failure_rate"` // 0.0-1.0, based on recent history
-	IsFlaky        bool    `json:"is_flaky"`
+	TestName       string `json:"test_name"`
+	FailureMessage string `json:"failure_message,omitempty"`
+	IsFlaky        bool   `json:"is_flaky"`
+	HistoryRuns    int    `json:"history_runs"`       // Total runs in history window
+	HistoryFails   int    `json:"history_fails"`      // Failed runs in history window
+	LastFailedAt   string `json:"last_failed_at"`     // RFC3339 timestamp of last failure
 }
