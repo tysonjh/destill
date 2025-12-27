@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"destill-agent/src/contracts"
 )
 
 func TestNewTestHistory(t *testing.T) {
@@ -457,7 +459,7 @@ func TestGetTestFlakeInfo_NotFlaky_NotEnoughSamples(t *testing.T) {
 
 	if info.IsFlaky {
 		t.Errorf("expected test to NOT be flaky (only %d samples < %d required)",
-			info.TotalRuns, FlakeMinSamples)
+			info.TotalRuns, contracts.FlakeMinSamples)
 	}
 	if info.TotalRuns != 4 {
 		t.Errorf("expected TotalRuns=4, got %d", info.TotalRuns)
@@ -621,8 +623,8 @@ func TestGetTestFlakeInfo_WindowLimit(t *testing.T) {
 	}
 
 	// Window should only include builds 11-30 (all passing)
-	if info.TotalRuns != FlakeWindowSize {
-		t.Errorf("expected TotalRuns=%d (window limit), got %d", FlakeWindowSize, info.TotalRuns)
+	if info.TotalRuns != contracts.FlakeWindowSize {
+		t.Errorf("expected TotalRuns=%d (window limit), got %d", contracts.FlakeWindowSize, info.TotalRuns)
 	}
 	if info.FailedRuns != 0 {
 		t.Errorf("expected FailedRuns=0 (old failures outside window), got %d", info.FailedRuns)

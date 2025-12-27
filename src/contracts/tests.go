@@ -3,6 +3,19 @@ package contracts
 // TopicTestResults is the topic for test result messages.
 const TopicTestResults = "destill.test.results"
 
+// Flaky detection constants
+const (
+	// FlakeWindowSize is the number of recent builds to consider for flakiness.
+	FlakeWindowSize = 20
+
+	// FlakeThreshold is the minimum failure rate to consider a test flaky.
+	// 0.10 = 10% of runs failed = flaky
+	FlakeThreshold = 0.10
+
+	// FlakeMinSamples is the minimum number of runs required to make a judgment.
+	FlakeMinSamples = 5
+)
+
 // TestResult represents a single test execution from JUnit XML.
 // Published to: destill.test.results
 // Key: {request_id}

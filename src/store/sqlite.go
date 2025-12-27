@@ -10,6 +10,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
+
+	"destill-agent/src/contracts"
 )
 
 // TestResult represents a single test execution record.
@@ -199,18 +201,6 @@ func (th *TestHistory) Close() error {
 	return th.db.Close()
 }
 
-// Flaky detection constants
-const (
-	// FlakeWindowSize is the number of recent builds to consider for flakiness.
-	FlakeWindowSize = 20
-
-	// FlakeThreshold is the minimum failure rate to consider a test flaky.
-	// 0.10 = 10% of runs failed = flaky
-	FlakeThreshold = 0.10
-
-	// FlakeMinSamples is the minimum number of runs required to make a judgment.
-	FlakeMinSamples = 5
-)
 
 // TestFlakeInfo contains flakiness information for a test.
 type TestFlakeInfo struct {
@@ -235,7 +225,7 @@ func (th *TestHistory) GetTestFlakeInfo(ctx context.Context, pipelineID, testNam
 	)
 	`
 
-	rows, err := th.db.QueryContext(ctx, query, pipelineID, testName, excludeBuild, FlakeWindowSize)
+	rows, err := th.db.QueryContext(ctx, query, pipelineID, testName, excludeBuild, contracts.FlakeWindowSize)
 	if err != nil {
 		return TestFlakeInfo{}, fmt.Errorf("failed to query test history: %w", err)
 	}
@@ -274,7 +264,7 @@ func (th *TestHistory) GetTestFlakeInfo(ctx context.Context, pipelineID, testNam
 	}
 
 	// Flaky if: enough samples AND failure rate exceeds threshold
-	info.IsFlaky = totalRuns >= FlakeMinSamples && info.FailureRate >= FlakeThreshold
+	info.IsFlaky = totalRuns >= contracts.FlakeMinSamples && info.FailureRate >= contracts.FlakeThreshold
 
 	return info, nil
 }
