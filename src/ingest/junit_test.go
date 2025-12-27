@@ -216,30 +216,6 @@ func TestIsXMLFile(t *testing.T) {
 	}
 }
 
-func TestSummarizeResults(t *testing.T) {
-	results := []ParsedTestResult{
-		{Passed: true},
-		{Passed: true},
-		{Passed: false},
-		{Passed: true, Skipped: true},
-	}
-
-	total, passed, failed, skipped := SummarizeResults(results)
-
-	if total != 4 {
-		t.Errorf("total = %d, want 4", total)
-	}
-	if passed != 2 {
-		t.Errorf("passed = %d, want 2", passed)
-	}
-	if failed != 1 {
-		t.Errorf("failed = %d, want 1", failed)
-	}
-	if skipped != 1 {
-		t.Errorf("skipped = %d, want 1", skipped)
-	}
-}
-
 func TestBuildFailureMessage_Truncation(t *testing.T) {
 	// Very long content should be truncated
 	longContent := ""

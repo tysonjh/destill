@@ -37,15 +37,6 @@ func NewClient(token string) *Client {
 	}
 }
 
-// ParseWorkflowRunURL extracts owner, repo, and run ID from URL
-func ParseWorkflowRunURL(url string) (owner, repo, runID string, err error) {
-	matches := workflowRunURLPattern.FindStringSubmatch(url)
-	if matches == nil {
-		return "", "", "", fmt.Errorf("%w: %s", ErrInvalidURL, url)
-	}
-	return matches[1], matches[2], matches[3], nil
-}
-
 // GetWorkflowRun fetches workflow run metadata
 func (c *Client) GetWorkflowRun(ctx context.Context, owner, repo, runID string) (*WorkflowRun, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/actions/runs/%s", c.baseURL, owner, repo, runID)

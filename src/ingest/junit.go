@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"encoding/xml"
-	"fmt"
 	"strconv"
 	"strings"
 )
@@ -192,28 +191,4 @@ func parseTime(s string) float64 {
 // IsXMLFile checks if a filename looks like an XML file.
 func IsXMLFile(filename string) bool {
 	return strings.HasSuffix(strings.ToLower(filename), ".xml")
-}
-
-// SummarizeResults creates summary statistics from parsed results.
-func SummarizeResults(results []ParsedTestResult) (total, passed, failed, skipped int) {
-	for _, r := range results {
-		total++
-		if r.Skipped {
-			skipped++
-		} else if r.Passed {
-			passed++
-		} else {
-			failed++
-		}
-	}
-	return
-}
-
-// FormatTestResultsSummary formats a human-readable summary of test results.
-func FormatTestResultsSummary(results []ParsedTestResult) string {
-	total, passed, failed, skipped := SummarizeResults(results)
-	if total == 0 {
-		return "No tests found"
-	}
-	return fmt.Sprintf("%d tests: %d passed, %d failed, %d skipped", total, passed, failed, skipped)
 }

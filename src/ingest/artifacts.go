@@ -50,20 +50,6 @@ func NewArtifactAgent(brk broker.Broker, history *store.TestHistory, log logger.
 	}
 }
 
-// Run starts the agent's main loop.
-// It subscribes to destill.requests and processes incoming build analysis requests.
-func (a *ArtifactAgent) Run(ctx context.Context) error {
-	a.logger.Info("[ArtifactAgent] Starting...")
-
-	// Subscribe to requests topic
-	msgChan, err := a.broker.Subscribe(ctx, contracts.TopicRequests, "destill-artifacts")
-	if err != nil {
-		return fmt.Errorf("failed to subscribe to %s: %w", contracts.TopicRequests, err)
-	}
-
-	return a.RunWithChannel(ctx, msgChan)
-}
-
 // RunWithChannel runs the agent's processing loop using a pre-subscribed channel.
 func (a *ArtifactAgent) RunWithChannel(ctx context.Context, msgChan <-chan broker.Message) error {
 	a.logger.Info("[ArtifactAgent] Listening for requests on '%s' topic...", contracts.TopicRequests)
