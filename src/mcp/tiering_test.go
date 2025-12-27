@@ -65,39 +65,27 @@ func TestContextTruncation(t *testing.T) {
 		Metadata:        map[string]string{"job_state": "failed"},
 	}
 
-	tests := []struct {
-		tier            int
-		expectedPreLen  int
-		expectedPostLen int
-	}{
-		{tier: 1, expectedPreLen: Tier1PreContext, expectedPostLen: Tier1PostContext},
-		{tier: 3, expectedPreLen: Tier3PreContext, expectedPostLen: Tier3PostContext},
+	// Test context truncation (same limits for all tiers)
+	finding := convertToFinding(card, false, 1)
+
+	if len(finding.PreContext) != MCPPreContext {
+		t.Errorf("PreContext len = %d, expected %d", len(finding.PreContext), MCPPreContext)
+	}
+	if len(finding.PostContext) != MCPPostContext {
+		t.Errorf("PostContext len = %d, expected %d", len(finding.PostContext), MCPPostContext)
 	}
 
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("tier-%d", tt.tier), func(t *testing.T) {
-			finding := convertToFinding(card, false, tt.tier)
+	// Pre-context should keep LAST N lines (closest to error)
+	if len(finding.PreContext) > 0 {
+		expectedFirstPre := fmt.Sprintf("pre-line-%d", 20-MCPPreContext)
+		if finding.PreContext[0] != expectedFirstPre {
+			t.Errorf("PreContext[0] = %q, expected %q (should keep last N lines)", finding.PreContext[0], expectedFirstPre)
+		}
+	}
 
-			if len(finding.PreContext) != tt.expectedPreLen {
-				t.Errorf("Tier %d PreContext len = %d, expected %d", tt.tier, len(finding.PreContext), tt.expectedPreLen)
-			}
-			if len(finding.PostContext) != tt.expectedPostLen {
-				t.Errorf("Tier %d PostContext len = %d, expected %d", tt.tier, len(finding.PostContext), tt.expectedPostLen)
-			}
-
-			// Pre-context should keep LAST N lines (closest to error)
-			if len(finding.PreContext) > 0 {
-				expectedFirstPre := fmt.Sprintf("pre-line-%d", 20-tt.expectedPreLen)
-				if finding.PreContext[0] != expectedFirstPre {
-					t.Errorf("Tier %d PreContext[0] = %q, expected %q (should keep last N lines)", tt.tier, finding.PreContext[0], expectedFirstPre)
-				}
-			}
-
-			// Post-context should keep FIRST N lines (immediately after error)
-			if len(finding.PostContext) > 0 && finding.PostContext[0] != "post-line-0" {
-				t.Errorf("Tier %d PostContext[0] = %q, expected %q (should keep first N lines)", tt.tier, finding.PostContext[0], "post-line-0")
-			}
-		})
+	// Post-context should keep FIRST N lines (immediately after error)
+	if len(finding.PostContext) > 0 && finding.PostContext[0] != "post-line-0" {
+		t.Errorf("PostContext[0] = %q, expected %q (should keep first N lines)", finding.PostContext[0], "post-line-0")
 	}
 }
 

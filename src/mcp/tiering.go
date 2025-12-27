@@ -7,14 +7,11 @@ import (
 )
 
 // Context line limits per tier.
-// Tier 1 (unique failures) gets more context for root cause analysis.
-// Tier 3 (noise) gets less since it's lower signal.
+// Context lines for MCP responses - minimal to reduce token usage.
+// Full context is available via get_finding_details.
 const (
-	Tier1PreContext  = 5
-	Tier1PostContext = 10
-
-	Tier3PreContext  = 2
-	Tier3PostContext = 3
+	MCPPreContext  = 2
+	MCPPostContext = 3
 )
 
 // Default finding limits per tier.
@@ -44,12 +41,12 @@ func CardToFinding(card contracts.TriageCard) Finding {
 }
 
 // convertToFinding converts a TriageCard to an LLM-ready Finding.
-// Context is truncated based on tier to reduce token usage.
+// Context is truncated to reduce token usage.
 func convertToFinding(card contracts.TriageCard, alsoInPassing bool, tier int) Finding {
-	// Get tier-specific context limits
-	preLimit, postLimit := getContextLimits(tier)
+	// Get context limits
+	preLimit, postLimit := getContextLimits()
 
-	// Truncate context to tier-specific limits
+	// Truncate context for LLM response
 	// Pre-context: keep last N lines (closest to the error)
 	// Post-context: keep first N lines (immediately after error)
 	preContext := truncatePreContext(card.PreContext, preLimit)
@@ -69,14 +66,9 @@ func convertToFinding(card contracts.TriageCard, alsoInPassing bool, tier int) F
 	}
 }
 
-// getContextLimits returns pre/post context line limits for a tier.
-func getContextLimits(tier int) (pre, post int) {
-	switch tier {
-	case 1:
-		return Tier1PreContext, Tier1PostContext
-	default: // Tier 3 (noise) or unknown
-		return Tier3PreContext, Tier3PostContext
-	}
+// getContextLimits returns pre/post context line limits.
+func getContextLimits() (pre, post int) {
+	return MCPPreContext, MCPPostContext
 }
 
 // truncateContext truncates a slice to at most limit elements.
