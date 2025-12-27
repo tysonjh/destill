@@ -59,12 +59,18 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 	}
 
 	build := &provider.Build{
-		ID:        bkBuild.ID,
-		Number:    fmt.Sprintf("%d", bkBuild.Number),
-		URL:       bkBuild.WebURL,
-		State:     bkBuild.State,
-		Timestamp: bkBuild.CreatedAt,
-		Jobs:      make([]provider.Job, 0, len(bkBuild.Jobs)),
+		ID:         bkBuild.ID,
+		Number:     fmt.Sprintf("%d", bkBuild.Number),
+		URL:        bkBuild.WebURL,
+		State:      bkBuild.State,
+		Branch:     bkBuild.Branch,
+		Commit:     bkBuild.Commit,
+		Message:    bkBuild.Message,
+		Source:     bkBuild.Source,
+		StartedAt:  bkBuild.StartedAt,
+		FinishedAt: bkBuild.FinishedAt,
+		Timestamp:  bkBuild.CreatedAt,
+		Jobs:       make([]provider.Job, 0, len(bkBuild.Jobs)),
 	}
 
 	for _, bkJob := range bkBuild.Jobs {

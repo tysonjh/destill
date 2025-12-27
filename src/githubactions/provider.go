@@ -2,10 +2,12 @@ package githubactions
 
 import (
 	"context"
-	"destill-agent/src/provider"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
+
+	"destill-agent/src/provider"
 )
 
 func init() {
@@ -95,13 +97,25 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 		}
 	}
 
+	// Determine finished time - use UpdatedAt if run is complete
+	var finishedAt time.Time
+	if run.Status == "completed" {
+		finishedAt = run.UpdatedAt
+	}
+
 	build := &provider.Build{
-		ID:        fmt.Sprintf("%d", run.ID),
-		Number:    fmt.Sprintf("%d", run.RunNumber),
-		URL:       run.HTMLURL,
-		State:     mapGitHubStatus(run.Status, run.Conclusion),
-		Timestamp: run.CreatedAt,
-		Jobs:      make([]provider.Job, 0, len(jobs)),
+		ID:         fmt.Sprintf("%d", run.ID),
+		Number:     fmt.Sprintf("%d", run.RunNumber),
+		URL:        run.HTMLURL,
+		State:      mapGitHubStatus(run.Status, run.Conclusion),
+		Branch:     run.HeadBranch,
+		Commit:     run.HeadSHA,
+		Message:    "", // GitHub API doesn't include commit message in workflow run
+		Source:     run.Event,
+		StartedAt:  run.RunStartedAt,
+		FinishedAt: finishedAt,
+		Timestamp:  run.CreatedAt,
+		Jobs:       make([]provider.Job, 0, len(jobs)),
 	}
 
 	for _, ghJob := range jobs {

@@ -56,16 +56,22 @@ type initialState struct {
 // BrokerChannels holds the channels and context for broker subscriptions.
 // Exported so callers can pre-subscribe before analysis starts.
 type BrokerChannels struct {
-	CardChan        <-chan broker.Message
-	ProgressChan    <-chan broker.Message
-	TestResultsChan <-chan broker.Message
-	Ctx             context.Context
-	Cancel          context.CancelFunc
+	CardChan          <-chan broker.Message
+	ProgressChan      <-chan broker.Message
+	TestResultsChan   <-chan broker.Message
+	BuildMetadataChan <-chan broker.Message
+	Ctx               context.Context
+	Cancel            context.CancelFunc
 }
 
 // testResultMsg is sent when a test result arrives from the broker
 type testResultMsg struct {
 	result contracts.TestResult
+}
+
+// buildMetadataMsg is sent when build metadata arrives from the broker
+type buildMetadataMsg struct {
+	metadata contracts.BuildMetadata
 }
 
 // buildInitialState processes the initial cards and builds the state needed for the TUI.
@@ -161,12 +167,19 @@ func SubscribeToBroker(brk broker.Broker) (*BrokerChannels, error) {
 		return nil, err
 	}
 
+	buildMetadataChan, err := brk.Subscribe(ctx, contracts.TopicBuildMetadata, "tui-build-metadata-consumer")
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
 	return &BrokerChannels{
-		CardChan:        cardChan,
-		ProgressChan:    progressChan,
-		TestResultsChan: testResultsChan,
-		Ctx:             ctx,
-		Cancel:          cancel,
+		CardChan:          cardChan,
+		ProgressChan:      progressChan,
+		TestResultsChan:   testResultsChan,
+		BuildMetadataChan: buildMetadataChan,
+		Ctx:               ctx,
+		Cancel:            cancel,
 	}, nil
 }
 
@@ -207,10 +220,11 @@ type MainModel struct {
 	testsModel   TestsModel
 
 	// Streaming support
-	cardChan        <-chan broker.Message // Channel receiving cards from broker
-	progressChan    <-chan broker.Message // Channel receiving progress updates
-	testResultsChan <-chan broker.Message // Channel receiving test results
-	pendingCards    []Item                // Cards waiting to be merged
+	cardChan          <-chan broker.Message // Channel receiving cards from broker
+	progressChan      <-chan broker.Message // Channel receiving progress updates
+	testResultsChan   <-chan broker.Message // Channel receiving test results
+	buildMetadataChan <-chan broker.Message // Channel receiving build metadata
+	pendingCards      []Item                // Cards waiting to be merged
 	hashMap         map[string]*Item      // For grouping by hash
 	status          LoadStatus            // Current loading status
 	cardCount       int                   // Total cards received (above threshold)
@@ -221,6 +235,9 @@ type MainModel struct {
 
 	// Test results tracking
 	testResults []contracts.TestResult
+
+	// Build metadata (from CI provider)
+	buildMetadata *contracts.BuildMetadata
 
 	// Progress tracking
 	progress ProgressModel // Progress model for showing loading state
@@ -290,41 +307,44 @@ func StartWithChannels(channels *BrokerChannels, initialCards []contracts.Triage
 	var cardChan <-chan broker.Message
 	var progressChan <-chan broker.Message
 	var testResultsChan <-chan broker.Message
+	var buildMetadataChan <-chan broker.Message
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if channels != nil {
 		cardChan = channels.CardChan
 		progressChan = channels.ProgressChan
 		testResultsChan = channels.TestResultsChan
+		buildMetadataChan = channels.BuildMetadataChan
 		ctx = channels.Ctx
 		cancel = channels.Cancel
 	}
 
 	model := MainModel{
-		header:          header,
-		listView:        listView,
-		items:           state.items,
-		styles:          styles,
-		detailViewport:  viewport.New(0, 0),
-		ready:           false,
-		tierFilter:      TierFilterAll, // Show all by default
-		viewMode:        ViewSummary,   // Start with summary view
-		summaryModel:    NewSummaryModel(styles),
-		testsModel:      NewTestsModel(styles),
-		cardChan:        cardChan,
-		progressChan:    progressChan,
-		testResultsChan: testResultsChan,
-		pendingCards:    nil,
-		hashMap:         state.hashMap,
-		status:          status,
-		cardCount:       len(initialCards),
-		droppedCount:    0,
-		jobsDiscovered:  state.jobsDiscovered,
-		ctx:             ctx,
-		cancel:          cancel,
-		progress:        NewProgressModel(),
-		uniqueCount:     unique,
-		noiseCount:      noise,
+		header:            header,
+		listView:          listView,
+		items:             state.items,
+		styles:            styles,
+		detailViewport:    viewport.New(0, 0),
+		ready:             false,
+		tierFilter:        TierFilterAll, // Show all by default
+		viewMode:          ViewSummary,   // Start with summary view
+		summaryModel:      NewSummaryModel(styles),
+		testsModel:        NewTestsModel(styles),
+		cardChan:          cardChan,
+		progressChan:      progressChan,
+		testResultsChan:   testResultsChan,
+		buildMetadataChan: buildMetadataChan,
+		pendingCards:      nil,
+		hashMap:           state.hashMap,
+		status:            status,
+		cardCount:         len(initialCards),
+		droppedCount:      0,
+		jobsDiscovered:    state.jobsDiscovered,
+		ctx:               ctx,
+		cancel:            cancel,
+		progress:          NewProgressModel(),
+		uniqueCount:       unique,
+		noiseCount:        noise,
 	}
 	// Update header with tier counts and view mode
 	model.header.SetTierCounts(unique, noise)
@@ -392,6 +412,10 @@ func (m MainModel) Init() tea.Cmd {
 		// Start listening for test results
 		cmds = append(cmds, listenForTestResults(m.testResultsChan))
 	}
+	if m.buildMetadataChan != nil {
+		// Start listening for build metadata
+		cmds = append(cmds, listenForBuildMetadata(m.buildMetadataChan))
+	}
 	// Start spinner animation for loading screen
 	cmds = append(cmds, SpinnerTick())
 	return tea.Batch(cmds...)
@@ -453,6 +477,23 @@ func listenForTestResults(testResultsChan <-chan broker.Message) tea.Cmd {
 	}
 }
 
+// listenForBuildMetadata returns a command that waits for build metadata from the broker
+func listenForBuildMetadata(buildMetadataChan <-chan broker.Message) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-buildMetadataChan
+		if !ok {
+			// Channel closed
+			return nil
+		}
+
+		var metadata contracts.BuildMetadata
+		if err := json.Unmarshal(msg.Value, &metadata); err != nil {
+			return nil
+		}
+		return buildMetadataMsg{metadata: metadata}
+	}
+}
+
 // Update handles messages and updates the model
 func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -483,6 +524,13 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, listenForTestResults(m.testResultsChan))
 		}
 		return m, tea.Batch(cmds...)
+
+	case buildMetadataMsg:
+		// Build metadata arrived from broker
+		m.buildMetadata = &msg.metadata
+		// Update summary with authoritative build info
+		m.updateSummaryData()
+		return m, nil
 
 	case SpinnerTickMsg:
 		m.progress, cmd = m.progress.Update(msg)
@@ -768,12 +816,24 @@ func (m *MainModel) updateSummaryData() {
 	}
 	m.summaryModel.SetJobCounts(failedJobs, passedJobs, otherJobs)
 
-	// Build status
-	status := "passed"
-	if failedJobs > 0 {
-		status = "failed"
+	// Use authoritative build metadata if available
+	if m.buildMetadata != nil {
+		m.summaryModel.SetBuildInfo(m.buildMetadata.State, m.buildMetadata.Number, m.buildMetadata.URL)
+		m.summaryModel.SetBuildMetadata(
+			m.buildMetadata.Branch,
+			m.buildMetadata.Commit,
+			m.buildMetadata.Message,
+			m.buildMetadata.Source,
+			m.buildMetadata.Duration,
+		)
+	} else {
+		// Fall back to inferred status from jobs
+		status := "passed"
+		if failedJobs > 0 {
+			status = "failed"
+		}
+		m.summaryModel.SetBuildInfo(status, "", "")
 	}
-	m.summaryModel.SetBuildInfo(status, "", "")
 }
 
 // updateTestSummary builds a test summary from collected test results

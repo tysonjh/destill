@@ -4,13 +4,18 @@ import "time"
 
 // WorkflowRun represents a GitHub Actions workflow run
 type WorkflowRun struct {
-	ID         int64     `json:"id"`
-	Name       string    `json:"name"`
-	RunNumber  int       `json:"run_number"`
-	Status     string    `json:"status"`
-	Conclusion string    `json:"conclusion"`
-	HTMLURL    string    `json:"html_url"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID           int64     `json:"id"`
+	Name         string    `json:"name"`
+	RunNumber    int       `json:"run_number"`
+	Status       string    `json:"status"`
+	Conclusion   string    `json:"conclusion"`
+	HTMLURL      string    `json:"html_url"`
+	HeadBranch   string    `json:"head_branch"`
+	HeadSHA      string    `json:"head_sha"`
+	Event        string    `json:"event"` // push, pull_request, schedule, workflow_dispatch
+	CreatedAt    time.Time `json:"created_at"`
+	RunStartedAt time.Time `json:"run_started_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // WorkflowJob represents a job within a workflow run

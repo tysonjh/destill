@@ -110,6 +110,9 @@ func (a *Agent) processRequest(ctx context.Context, msg broker.Message) error {
 	a.logger.Info("[IngestAgent] Fetching build metadata for %s", buildID)
 	a.logger.Info("[IngestAgent] Found %d jobs in build (state: %s)", len(build.Jobs), build.State)
 
+	// Publish build metadata
+	a.publishBuildMetadata(ctx, request.RequestID, build)
+
 	// Count script jobs for progress tracking
 	scriptJobs := 0
 	for _, job := range build.Jobs {
@@ -209,4 +212,69 @@ func (a *Agent) publishProgress(ctx context.Context, requestID, stage string, cu
 	if err := a.broker.Publish(ctx, contracts.TopicProgress, requestID, data); err != nil {
 		a.logger.Error("[IngestAgent] Failed to publish progress update: %v", err)
 	}
+}
+
+// publishBuildMetadata publishes authoritative build metadata to the broker.
+func (a *Agent) publishBuildMetadata(ctx context.Context, requestID string, build *provider.Build) {
+	// Calculate duration if build has finished
+	var duration string
+	if !build.StartedAt.IsZero() && !build.FinishedAt.IsZero() {
+		d := build.FinishedAt.Sub(build.StartedAt)
+		duration = formatDuration(d)
+	}
+
+	// Format times
+	var startedAt, finishedAt string
+	if !build.StartedAt.IsZero() {
+		startedAt = build.StartedAt.Format(time.RFC3339)
+	}
+	if !build.FinishedAt.IsZero() {
+		finishedAt = build.FinishedAt.Format(time.RFC3339)
+	}
+
+	metadata := contracts.BuildMetadata{
+		RequestID:  requestID,
+		URL:        build.URL,
+		Number:     build.Number,
+		State:      build.State,
+		Branch:     build.Branch,
+		Commit:     build.Commit,
+		Message:    build.Message,
+		Source:     build.Source,
+		StartedAt:  startedAt,
+		FinishedAt: finishedAt,
+		Duration:   duration,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+	}
+
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		a.logger.Error("[IngestAgent] Failed to marshal build metadata: %v", err)
+		return
+	}
+
+	if err := a.broker.Publish(ctx, contracts.TopicBuildMetadata, requestID, data); err != nil {
+		a.logger.Error("[IngestAgent] Failed to publish build metadata: %v", err)
+	}
+}
+
+// formatDuration formats a duration as a human-readable string.
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		m := int(d.Minutes())
+		s := int(d.Seconds()) % 60
+		if s > 0 {
+			return fmt.Sprintf("%dm %ds", m, s)
+		}
+		return fmt.Sprintf("%dm", m)
+	}
+	h := int(d.Hours())
+	m := int(d.Minutes()) % 60
+	if m > 0 {
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	return fmt.Sprintf("%dh", h)
 }

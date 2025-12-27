@@ -19,10 +19,17 @@ type SummaryModel struct {
 	buildNumber string
 	buildURL    string
 
+	// Build metadata (from CI provider)
+	buildBranch   string
+	buildCommit   string
+	buildMessage  string
+	buildSource   string
+	buildDuration string
+
 	// Job counts
-	failedJobCount  int
-	passedJobCount  int
-	otherJobCount   int
+	failedJobCount int
+	passedJobCount int
+	otherJobCount  int
 
 	// Log findings
 	uniqueCount        int
@@ -52,6 +59,15 @@ func (m *SummaryModel) SetBuildInfo(status, number, url string) {
 	m.buildStatus = status
 	m.buildNumber = number
 	m.buildURL = url
+}
+
+// SetBuildMetadata updates the build metadata from CI provider.
+func (m *SummaryModel) SetBuildMetadata(branch, commit, message, source, duration string) {
+	m.buildBranch = branch
+	m.buildCommit = commit
+	m.buildMessage = message
+	m.buildSource = source
+	m.buildDuration = duration
 }
 
 // SetJobCounts updates the job counts.
@@ -156,10 +172,46 @@ func (m SummaryModel) renderStatusSection() string {
 	labelStyle := lipgloss.NewStyle().
 		Foreground(m.styles.TextSecondary)
 
-	// Build info line
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#FFFFFF"))
+
+	// Build info line: Status + Build number + Duration
 	buildInfo := fmt.Sprintf("Status: %s", statusStyle.Render(statusText))
 	if m.buildNumber != "" {
 		buildInfo += fmt.Sprintf("    Build #%s", m.buildNumber)
+	}
+	if m.buildDuration != "" {
+		buildInfo += fmt.Sprintf("    Duration: %s", m.buildDuration)
+	}
+
+	// Branch and commit line
+	var scmParts []string
+	if m.buildBranch != "" {
+		scmParts = append(scmParts, fmt.Sprintf("Branch: %s", valueStyle.Render(m.buildBranch)))
+	}
+	if m.buildCommit != "" {
+		// Show short commit hash
+		shortCommit := m.buildCommit
+		if len(shortCommit) > 8 {
+			shortCommit = shortCommit[:8]
+		}
+		scmParts = append(scmParts, fmt.Sprintf("Commit: %s", valueStyle.Render(shortCommit)))
+	}
+	scmLine := ""
+	if len(scmParts) > 0 {
+		scmLine = strings.Join(scmParts, "    ")
+	}
+
+	// Commit message (truncated)
+	messageLine := ""
+	if m.buildMessage != "" {
+		msg := m.buildMessage
+		if len(msg) > 60 {
+			msg = msg[:57] + "..."
+		}
+		// Remove newlines
+		msg = strings.ReplaceAll(msg, "\n", " ")
+		messageLine = labelStyle.Render("Message: ") + msg
 	}
 
 	// Job counts line
@@ -179,12 +231,22 @@ func (m SummaryModel) renderStatusSection() string {
 		jobsLine = labelStyle.Render("Jobs: ") + strings.Join(jobParts, ", ")
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		"",
-		buildInfo,
-		jobsLine,
-		"",
-	)
+	// Build result lines
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, buildInfo)
+	if scmLine != "" {
+		lines = append(lines, scmLine)
+	}
+	if messageLine != "" {
+		lines = append(lines, messageLine)
+	}
+	if jobsLine != "" {
+		lines = append(lines, jobsLine)
+	}
+	lines = append(lines, "")
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
 func (m SummaryModel) renderTestResults() string {

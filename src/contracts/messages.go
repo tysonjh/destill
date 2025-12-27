@@ -130,6 +130,24 @@ func DeduplicateCards(cards []TriageCard) []TriageCard {
 	return result
 }
 
+// BuildMetadata contains authoritative build information from the CI provider.
+// Published to: destill.build.metadata
+// Key: {request_id}
+type BuildMetadata struct {
+	RequestID  string `json:"request_id"`
+	URL        string `json:"url"`
+	Number     string `json:"number"`
+	State      string `json:"state"`  // passed, failed, canceled, running
+	Branch     string `json:"branch"`
+	Commit     string `json:"commit"` // Git SHA
+	Message    string `json:"message,omitempty"`
+	Source     string `json:"source"` // webhook, api, schedule, ui
+	StartedAt  string `json:"started_at,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
+	Duration   string `json:"duration,omitempty"` // Human-readable duration
+	Timestamp  string `json:"timestamp"`
+}
+
 // TopicNames defines the Redpanda topic names used in the distributed architecture
 const (
 	// TopicLogsRaw contains raw log chunks (~500KB each)
@@ -143,4 +161,7 @@ const (
 
 	// TopicProgress contains progress updates during analysis
 	TopicProgress = "destill.progress"
+
+	// TopicBuildMetadata contains build metadata from CI provider
+	TopicBuildMetadata = "destill.build.metadata"
 )

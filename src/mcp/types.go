@@ -14,7 +14,15 @@ type TieredResponse struct {
 // BuildInfo contains build metadata.
 type BuildInfo struct {
 	URL             string   `json:"url"`
+	Number          string   `json:"number,omitempty"`
 	Status          string   `json:"status"`
+	Branch          string   `json:"branch,omitempty"`
+	Commit          string   `json:"commit,omitempty"`
+	Message         string   `json:"message,omitempty"`
+	Source          string   `json:"source,omitempty"`    // Build trigger: webhook, api, schedule, ui
+	StartedAt       string   `json:"started_at,omitempty"`
+	FinishedAt      string   `json:"finished_at,omitempty"`
+	Duration        string   `json:"duration,omitempty"` // Human-readable duration
 	FailedJobs      []string `json:"failed_jobs"`
 	PassedJobsCount int      `json:"passed_jobs_count"`
 	OtherJobsCount  int      `json:"other_jobs_count,omitempty"` // canceled, skipped, in_progress, etc.

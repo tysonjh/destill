@@ -27,12 +27,18 @@ type Client struct {
 
 // Build represents a Buildkite build.
 type Build struct {
-	ID        string    `json:"id"`
-	Number    int       `json:"number"`
-	State     string    `json:"state"`
-	WebURL    string    `json:"web_url"`
-	CreatedAt time.Time `json:"created_at"`
-	Jobs      []Job     `json:"jobs"`
+	ID         string    `json:"id"`
+	Number     int       `json:"number"`
+	State      string    `json:"state"`
+	Branch     string    `json:"branch"`
+	Commit     string    `json:"commit"`
+	Message    string    `json:"message"`
+	Source     string    `json:"source"`
+	WebURL     string    `json:"web_url"`
+	CreatedAt  time.Time `json:"created_at"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
+	Jobs       []Job     `json:"jobs"`
 }
 
 // Job represents a Buildkite job within a build.

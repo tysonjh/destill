@@ -180,6 +180,10 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	if err != nil {
 		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
 	}
+	metadataCh, err := msgBroker.Subscribe(ctx, contracts.TopicBuildMetadata, "mcp-server-metadata")
+	if err != nil {
+		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
+	}
 
 	if err := pipeline.Start(msgBroker, pipelineCtx); err != nil {
 		return nil, BuildInfo{}, nil, fmt.Errorf("failed to start pipeline: %w", err)
@@ -198,14 +202,14 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	}
 	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
 
-	// Collect findings and test results with timeout
-	cards, testResults, err := s.collectFromChannels(ctx, findingsCh, testsCh)
+	// Collect findings, test results, and build metadata with timeout
+	cards, testResults, buildMeta, err := s.collectFromChannels(ctx, findingsCh, testsCh, metadataCh)
 	if err != nil {
 		return nil, BuildInfo{}, nil, err
 	}
 
-	// Build info
-	buildInfo := extractBuildInfo(cards, buildURL)
+	// Build info from authoritative metadata (fallback to card-based extraction)
+	buildInfo := buildInfoFromMetadata(buildMeta, cards, buildURL)
 
 	// Build test summary if we have test results
 	var testSummary *contracts.TestSummary
@@ -221,10 +225,11 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	return cards, buildInfo, testSummary, nil
 }
 
-// collectFromChannels collects findings and test results from pre-subscribed channels until timeout.
-func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh <-chan broker.Message) ([]contracts.TriageCard, []contracts.TestResult, error) {
+// collectFromChannels collects findings, test results, and build metadata from pre-subscribed channels until timeout.
+func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh, metadataCh <-chan broker.Message) ([]contracts.TriageCard, []contracts.TestResult, *contracts.BuildMetadata, error) {
 	var cards []contracts.TriageCard
 	var testResults []contracts.TestResult
+	var buildMeta *contracts.BuildMetadata
 	timeout := time.After(120 * time.Second)
 	lastActivity := time.Now()
 
@@ -242,16 +247,70 @@ func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh <-
 				testResults = append(testResults, result)
 				lastActivity = time.Now()
 			}
+		case msg := <-metadataCh:
+			var meta contracts.BuildMetadata
+			if err := json.Unmarshal(msg.Value, &meta); err == nil {
+				buildMeta = &meta
+				lastActivity = time.Now()
+			}
 		case <-timeout:
-			return cards, testResults, nil
+			return cards, testResults, buildMeta, nil
 		case <-ctx.Done():
-			return cards, testResults, ctx.Err()
+			return cards, testResults, buildMeta, ctx.Err()
 		default:
 			if time.Since(lastActivity) > 10*time.Second && len(cards) > 0 {
-				return cards, testResults, nil
+				return cards, testResults, buildMeta, nil
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+	}
+}
+
+// buildInfoFromMetadata creates BuildInfo from authoritative metadata, falling back to card extraction.
+func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.TriageCard, url string) BuildInfo {
+	// Fall back to card-based extraction if no metadata
+	if meta == nil {
+		return extractBuildInfo(cards, url)
+	}
+
+	// Extract job counts from cards (metadata doesn't have per-job info)
+	failedJobs := make(map[string]bool)
+	passedJobs := make(map[string]bool)
+	otherJobs := make(map[string]bool)
+
+	for _, card := range cards {
+		switch card.Metadata["job_state"] {
+		case "failed":
+			failedJobs[card.JobName] = true
+		case "passed":
+			passedJobs[card.JobName] = true
+		case "":
+			// Skip cards without job_state metadata
+		default:
+			otherJobs[card.JobName] = true
+		}
+	}
+
+	var failed []string
+	for job := range failedJobs {
+		failed = append(failed, job)
+	}
+
+	return BuildInfo{
+		URL:             meta.URL,
+		Number:          meta.Number,
+		Status:          meta.State,
+		Branch:          meta.Branch,
+		Commit:          meta.Commit,
+		Message:         meta.Message,
+		Source:          meta.Source,
+		StartedAt:       meta.StartedAt,
+		FinishedAt:      meta.FinishedAt,
+		Duration:        meta.Duration,
+		FailedJobs:      failed,
+		PassedJobsCount: len(passedJobs),
+		OtherJobsCount:  len(otherJobs),
+		Timestamp:       meta.Timestamp,
 	}
 }
 
