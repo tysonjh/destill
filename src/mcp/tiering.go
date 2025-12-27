@@ -15,60 +15,43 @@ const (
 )
 
 // Default finding limits per tier.
-// Tier 1 (unique failures) gets more findings since they're highest signal.
-// Tier 3 (noise) is limited to reduce output size - just show top examples.
 const (
-	DefaultTier1Limit = 15
+	DefaultTier1Limit = 5
 	DefaultTier3Limit = 3
 )
 
 // CardToFinding converts a single TriageCard to a Finding for drill-down.
 // Used by get_finding_details when retrieving a single card from the store.
-// Aggregate fields (AlsoInPassingJobs, etc.) are not populated as they
-// require cross-card analysis. Context is included at full detail (tier 1).
+// Full context is included (not truncated like manifest findings).
 func CardToFinding(card contracts.TriageCard) Finding {
 	return Finding{
-		ID:          card.MessageHash,
-		Message:     sanitize.Clean(card.RawMessage),
-		Severity:    card.Severity,
-		Confidence:  card.ConfidenceScore,
-		Job:         card.JobName,
-		JobState:    card.Metadata["job_state"],
-		Recurrence:  card.GetRecurrenceCount(),
-		PreContext:  sanitize.CleanLines(card.PreContext),
-		PostContext: sanitize.CleanLines(card.PostContext),
+		ID:         card.MessageHash,
+		Message:    sanitize.Clean(card.RawMessage),
+		Severity:   card.Severity,
+		Confidence: card.ConfidenceScore,
+		Job:        card.JobName,
+		Pre:        sanitize.CleanLines(card.PreContext),
+		Post:       sanitize.CleanLines(card.PostContext),
 	}
 }
 
 // convertToFinding converts a TriageCard to an LLM-ready Finding.
 // Context is truncated to reduce token usage.
-func convertToFinding(card contracts.TriageCard, alsoInPassing bool, tier int) Finding {
-	// Get context limits
-	preLimit, postLimit := getContextLimits()
-
+func convertToFinding(card contracts.TriageCard, alsoInPassing bool) Finding {
 	// Truncate context for LLM response
-	// Pre-context: keep last N lines (closest to the error)
-	// Post-context: keep first N lines (immediately after error)
-	preContext := truncatePreContext(card.PreContext, preLimit)
-	postContext := truncateContext(card.PostContext, postLimit)
+	preContext := truncatePreContext(card.PreContext, MCPPreContext)
+	postContext := truncateContext(card.PostContext, MCPPostContext)
 
 	return Finding{
-		ID:                card.MessageHash, // Stable identifier for drill-down
-		Message:           sanitize.Clean(card.RawMessage),
-		Severity:          card.Severity,
-		Confidence:        card.ConfidenceScore,
-		Job:               card.JobName,
-		JobState:          card.Metadata["job_state"],
-		Recurrence:        card.GetRecurrenceCount(),
-		AlsoInPassingJobs: alsoInPassing,
-		PreContext:        sanitize.CleanLines(preContext),
-		PostContext:       sanitize.CleanLines(postContext),
+		ID:         card.MessageHash,
+		Message:    sanitize.Clean(card.RawMessage),
+		Severity:   card.Severity,
+		Confidence: card.ConfidenceScore,
+		Job:        card.JobName,
+		InPassing:  alsoInPassing,
+		Pre:        sanitize.CleanLines(preContext),
+		Post:       sanitize.CleanLines(postContext),
 	}
-}
-
-// getContextLimits returns pre/post context line limits.
-func getContextLimits() (pre, post int) {
-	return MCPPreContext, MCPPostContext
 }
 
 // truncateContext truncates a slice to at most limit elements.
@@ -111,9 +94,8 @@ func TierFindings(cards []contracts.TriageCard, limit int) TieredResponse {
 	jobStates := ranking.BuildJobStateMap(cards)
 
 	// Convert ranked cards to Findings with limits
-	// Note: Tier2 (frequency spikes) is not yet implemented - always empty
-	unique := convertRankedToFindings(tiered.Unique, jobStates, cards, tier1Limit)
-	noise := convertRankedToFindings(tiered.Noise, jobStates, cards, tier3Limit)
+	unique := convertRankedToFindings(tiered.Unique, jobStates, tier1Limit)
+	noise := convertRankedToFindings(tiered.Noise, jobStates, tier3Limit)
 
 	return TieredResponse{
 		Tier1UniqueFailures:  unique,
@@ -123,18 +105,14 @@ func TierFindings(cards []contracts.TriageCard, limit int) TieredResponse {
 }
 
 // convertRankedToFindings converts RankedCards to Findings with a limit.
-func convertRankedToFindings(ranked []ranking.RankedCard, jobStates map[string]string, allCards []contracts.TriageCard, limit int) []Finding {
+func convertRankedToFindings(ranked []ranking.RankedCard, jobStates map[string]string, limit int) []Finding {
 	var findings []Finding
 	for _, rc := range ranked {
 		if len(findings) >= limit {
 			break
 		}
 		alsoInPassing := jobStates[rc.Card.NormalizedMsg] == "both"
-		finding := convertToFinding(rc.Card, alsoInPassing, rc.Tier)
-		if rc.Tier == ranking.TierNoise {
-			finding.PassingJobCount = ranking.CountPassingJobs(allCards, rc.Card.NormalizedMsg)
-		}
-		findings = append(findings, finding)
+		findings = append(findings, convertToFinding(rc.Card, alsoInPassing))
 	}
 	return findings
 }
@@ -144,10 +122,10 @@ func convertRankedToFindings(ranked []ranking.RankedCard, jobStates map[string]s
 // Tier 2-3 findings are converted to lightweight summaries.
 // testSummary is optional - pass nil if no test results available.
 func ToManifest(requestID string, response TieredResponse, testSummary *contracts.TestSummary) ManifestResponse {
-	// Compress and include full tier 1 findings
-	tier1 := make([]Finding, len(response.Tier1UniqueFailures))
+	// Compress and include tier 1 findings
+	findings := make([]Finding, len(response.Tier1UniqueFailures))
 	for i, f := range response.Tier1UniqueFailures {
-		tier1[i] = compressFinding(f)
+		findings[i] = compressFinding(f)
 	}
 
 	// Convert tier 2-3 to summaries
@@ -160,42 +138,70 @@ func ToManifest(requestID string, response TieredResponse, testSummary *contract
 	}
 
 	return ManifestResponse{
-		RequestID:     requestID,
-		Build:         response.Build,
-		Tests:         testSummary,
-		Tier1Findings: tier1,
-		OtherFindings: other,
+		RequestID: requestID,
+		Build:     response.Build,
+		Tests:     convertTestSummary(testSummary),
+		Findings:  findings,
+		Other:     other,
 	}
+}
+
+// convertTestSummary converts contracts.TestSummary to token-efficient mcp.TestSummary.
+func convertTestSummary(ts *contracts.TestSummary) *TestSummary {
+	if ts == nil {
+		return nil
+	}
+
+	result := &TestSummary{
+		Total:      ts.TotalTests,
+		Passed:     ts.PassedCount,
+		Failed:     ts.FailedCount,
+		NovelCount: len(ts.NovelFailures),
+		FlakyCount: len(ts.FlakyFailures),
+	}
+
+	// Add up to MaxTestExamples for each category
+	for i, f := range ts.NovelFailures {
+		if i >= MaxTestExamples {
+			break
+		}
+		result.NovelExamples = append(result.NovelExamples, f.TestName)
+	}
+	for i, f := range ts.FlakyFailures {
+		if i >= MaxTestExamples {
+			break
+		}
+		result.FlakyExamples = append(result.FlakyExamples, f.TestName)
+	}
+
+	return result
 }
 
 // compressFinding applies log compression to a Finding.
 func compressFinding(f Finding) Finding {
 	return Finding{
-		ID:                f.ID,
-		Message:           CompressLine(f.Message),
-		Severity:          f.Severity,
-		Confidence:        f.Confidence,
-		Job:               f.Job,
-		JobState:          f.JobState,
-		Recurrence:        f.Recurrence,
-		AlsoInPassingJobs: f.AlsoInPassingJobs,
-		PreContext:        CompressContextLines(f.PreContext),
-		PostContext:       CompressContextLines(f.PostContext),
+		ID:         f.ID,
+		Message:    CompressLine(f.Message),
+		Severity:   f.Severity,
+		Confidence: f.Confidence,
+		Job:        f.Job,
+		InPassing:  f.InPassing,
+		Pre:        CompressContextLines(f.Pre),
+		Post:       CompressContextLines(f.Post),
 	}
 }
 
 // toSummary converts a Finding to a FindingSummary.
 func toSummary(f Finding, tier int) FindingSummary {
 	msg := f.Message
-	if len(msg) > 100 {
-		msg = msg[:97] + "..."
+	if len(msg) > MaxMessageLength {
+		msg = msg[:MaxMessageLength-3] + "..."
 	}
 	return FindingSummary{
-		ID:         f.ID,
-		Tier:       tier,
-		Message:    msg,
-		Severity:   f.Severity,
-		Confidence: f.Confidence,
-		Job:        f.Job,
+		ID:       f.ID,
+		Tier:     tier,
+		Message:  msg,
+		Severity: f.Severity,
+		Job:      f.Job,
 	}
 }

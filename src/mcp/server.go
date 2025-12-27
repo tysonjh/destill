@@ -209,7 +209,7 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	}
 
 	// Build info from authoritative metadata (fallback to card-based extraction)
-	buildInfo := buildInfoFromMetadata(buildMeta, cards, buildURL)
+	buildInfo := buildInfoFromMetadata(buildMeta, cards, testResults, buildURL)
 
 	// Build test summary if we have test results
 	var testSummary *contracts.TestSummary
@@ -263,7 +263,7 @@ func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh, m
 
 // buildInfoFromMetadata creates BuildInfo from authoritative metadata.
 // Returns "unknown" status if metadata is not available.
-func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.TriageCard, url string) BuildInfo {
+func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.TriageCard, testResults []contracts.TestResult, url string) BuildInfo {
 	// Extract job counts from cards (metadata doesn't have per-job info)
 	failedJobs := make(map[string]bool)
 	passedJobs := make(map[string]bool)
@@ -282,9 +282,23 @@ func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.Tria
 		}
 	}
 
-	var failed []string
+	// Track which jobs have test results
+	jobsWithTests := make(map[string]bool)
+	for _, tr := range testResults {
+		if tr.JobName != "" {
+			jobsWithTests[tr.JobName] = true
+		}
+	}
+
+	// Classify failed jobs by whether they have tests
+	var failed, failedWithTests, failedNoTests []string
 	for job := range failedJobs {
 		failed = append(failed, job)
+		if jobsWithTests[job] {
+			failedWithTests = append(failedWithTests, job)
+		} else {
+			failedNoTests = append(failedNoTests, job)
+		}
 	}
 
 	// Return unknown status if no authoritative metadata
@@ -293,8 +307,10 @@ func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.Tria
 			URL:             url,
 			Status:          "unknown",
 			FailedJobs:      failed,
-			PassedJobsCount: len(passedJobs),
-			OtherJobsCount:  len(otherJobs),
+			FailedWithTests: failedWithTests,
+			FailedNoTests:   failedNoTests,
+			PassedCount:     len(passedJobs),
+			OtherCount:      len(otherJobs),
 			Timestamp:       time.Now().UTC().Format(time.RFC3339),
 		}
 	}
@@ -311,8 +327,10 @@ func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.Tria
 		FinishedAt:      meta.FinishedAt,
 		Duration:        meta.Duration,
 		FailedJobs:      failed,
-		PassedJobsCount: len(passedJobs),
-		OtherJobsCount:  len(otherJobs),
+		FailedWithTests: failedWithTests,
+		FailedNoTests:   failedNoTests,
+		PassedCount:     len(passedJobs),
+		OtherCount:      len(otherJobs),
 		Timestamp:       meta.Timestamp,
 	}
 }
