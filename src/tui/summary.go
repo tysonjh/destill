@@ -285,20 +285,24 @@ func (m SummaryModel) renderLogFindings() string {
 }
 
 func (m SummaryModel) renderFooter() string {
+	keyStyle := lipgloss.NewStyle().Foreground(m.styles.PrimaryBlue).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
+
+	var parts []string
+	if m.hasTestResults {
+		parts = append(parts, fmt.Sprintf("%s: Tests", keyStyle.Render("t")))
+	}
+	if m.uniqueCount > 0 || m.noiseCount > 0 {
+		parts = append(parts, fmt.Sprintf("%s: Logs", keyStyle.Render("l")))
+	}
+	parts = append(parts, fmt.Sprintf("%s: Quit", keyStyle.Render("q")))
+
+	helpText := strings.Join(parts, " "+sepStyle.Render("•")+" ")
+
 	footerStyle := lipgloss.NewStyle().
-		Foreground(m.styles.TextSecondary).
 		Align(lipgloss.Center).
 		Width(m.width - 4).
 		Padding(1, 0)
 
-	var hints []string
-	if m.hasTestResults {
-		hints = append(hints, "[t] Tests")
-	}
-	if m.uniqueCount > 0 || m.noiseCount > 0 {
-		hints = append(hints, "[l] Logs")
-	}
-	hints = append(hints, "[q] Quit")
-
-	return footerStyle.Render("Press " + strings.Join(hints, ", "))
+	return footerStyle.Render(helpText)
 }
