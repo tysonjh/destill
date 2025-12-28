@@ -27,6 +27,30 @@ type TestResult struct {
 	CreatedAt      time.Time
 }
 
+// FindingResult represents a single finding occurrence in a build.
+type FindingResult struct {
+	ID          int64
+	PipelineID  string
+	MessageHash string
+	BuildNumber int
+	JobName     string
+	JobPassed   bool
+	Severity    string
+	Confidence  float64
+	CreatedAt   time.Time
+}
+
+// FindingNoveltyInfo contains novelty information for a finding.
+type FindingNoveltyInfo struct {
+	IsNovel           bool    // Never seen before in this pipeline
+	SeenInPassingJobs bool    // Has appeared in passing jobs before
+	TotalOccurrences  int     // How many times this finding has appeared
+	PassingOccurs     int     // Occurrences in passing jobs
+	FailingOccurs     int     // Occurrences in failing jobs
+	FirstSeenBuild    int     // Build number where first seen (0 if novel)
+	LastSeenBuild     int     // Most recent build where seen (0 if novel)
+}
+
 // TestHistory provides persistent storage for test results.
 // Used for flaky test detection via sliding window analysis.
 type TestHistory struct {
@@ -78,6 +102,23 @@ func (th *TestHistory) migrate() error {
 		UNIQUE(pipeline_id, test_name, build_number)
 	);
 	CREATE INDEX IF NOT EXISTS idx_pipeline_test ON test_results(pipeline_id, test_name);
+
+	CREATE TABLE IF NOT EXISTS finding_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		pipeline_id TEXT NOT NULL,
+		message_hash TEXT NOT NULL,
+		build_number INTEGER NOT NULL,
+		job_name TEXT NOT NULL,
+		job_passed INTEGER NOT NULL,
+		severity TEXT,
+		confidence REAL,
+		created_at TEXT NOT NULL,
+		UNIQUE(pipeline_id, message_hash, build_number, job_name)
+	);
+	CREATE INDEX IF NOT EXISTS idx_finding_pipeline_hash
+		ON finding_history(pipeline_id, message_hash);
+	CREATE INDEX IF NOT EXISTS idx_finding_pipeline_build
+		ON finding_history(pipeline_id, build_number DESC);
 	`
 	if _, err := th.db.Exec(schema); err != nil {
 		return err
@@ -267,4 +308,225 @@ func (th *TestHistory) GetTestFlakeInfo(ctx context.Context, pipelineID, testNam
 	info.IsFlaky = totalRuns >= contracts.FlakeMinSamples && info.FailureRate >= contracts.FlakeThreshold
 
 	return info, nil
+}
+
+// RecordFinding stores a finding occurrence. Uses INSERT OR REPLACE for idempotency.
+func (th *TestHistory) RecordFinding(ctx context.Context, finding FindingResult) error {
+	query := `
+	INSERT OR REPLACE INTO finding_history
+		(pipeline_id, message_hash, build_number, job_name, job_passed, severity, confidence, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	jobPassed := 0
+	if finding.JobPassed {
+		jobPassed = 1
+	}
+	createdAt := finding.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+
+	_, err := th.db.ExecContext(ctx, query,
+		finding.PipelineID,
+		finding.MessageHash,
+		finding.BuildNumber,
+		finding.JobName,
+		jobPassed,
+		finding.Severity,
+		finding.Confidence,
+		createdAt.Format(time.RFC3339),
+	)
+	return err
+}
+
+// RecordFindingsFromCards batch records findings from TriageCards for a build.
+func (th *TestHistory) RecordFindingsFromCards(ctx context.Context, pipelineID string, buildNumber int, cards []contracts.TriageCard) error {
+	tx, err := th.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT OR REPLACE INTO finding_history
+		(pipeline_id, message_hash, build_number, job_name, job_passed, severity, confidence, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	for _, card := range cards {
+		if card.MessageHash == "" {
+			continue
+		}
+
+		jobState := card.Metadata["job_state"]
+		if jobState == "" {
+			continue
+		}
+
+		jobPassed := 0
+		if jobState == "passed" {
+			jobPassed = 1
+		}
+
+		_, err := stmt.ExecContext(ctx,
+			pipelineID,
+			card.MessageHash,
+			buildNumber,
+			card.JobName,
+			jobPassed,
+			card.Severity,
+			card.ConfidenceScore,
+			now,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to insert finding: %w", err)
+		}
+	}
+
+	return tx.Commit()
+}
+
+// GetFindingNoveltyInfo checks if a finding is novel and its history in passing jobs.
+// excludeBuild: The current build to exclude from analysis.
+func (th *TestHistory) GetFindingNoveltyInfo(ctx context.Context, pipelineID, messageHash string, excludeBuild int) (FindingNoveltyInfo, error) {
+	query := `
+	SELECT job_passed, build_number
+	FROM (
+		SELECT job_passed, build_number
+		FROM finding_history
+		WHERE pipeline_id = ? AND message_hash = ? AND build_number != ?
+		ORDER BY build_number DESC
+		LIMIT ?
+	)
+	`
+
+	rows, err := th.db.QueryContext(ctx, query,
+		pipelineID, messageHash, excludeBuild, contracts.FindingWindowSize)
+	if err != nil {
+		return FindingNoveltyInfo{}, fmt.Errorf("failed to query finding history: %w", err)
+	}
+	defer rows.Close()
+
+	var info FindingNoveltyInfo
+	var firstBuild, lastBuild int
+
+	for rows.Next() {
+		var jobPassed int
+		var buildNumber int
+		if err := rows.Scan(&jobPassed, &buildNumber); err != nil {
+			return FindingNoveltyInfo{}, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		info.TotalOccurrences++
+		if jobPassed == 1 {
+			info.PassingOccurs++
+			info.SeenInPassingJobs = true
+		} else {
+			info.FailingOccurs++
+		}
+
+		// Track first/last (first row is most recent due to ORDER BY DESC)
+		if lastBuild == 0 {
+			lastBuild = buildNumber
+		}
+		firstBuild = buildNumber
+	}
+
+	if err := rows.Err(); err != nil {
+		return FindingNoveltyInfo{}, err
+	}
+
+	info.IsNovel = info.TotalOccurrences == 0
+	info.FirstSeenBuild = firstBuild
+	info.LastSeenBuild = lastBuild
+
+	return info, nil
+}
+
+// GetFindingHistory retrieves the recent history for a specific finding hash.
+func (th *TestHistory) GetFindingHistory(ctx context.Context, pipelineID, messageHash string, excludeBuild int) ([]FindingResult, error) {
+	query := `
+	SELECT id, pipeline_id, message_hash, build_number, job_name, job_passed, severity, confidence, created_at
+	FROM finding_history
+	WHERE pipeline_id = ? AND message_hash = ? AND build_number != ?
+	ORDER BY build_number DESC
+	LIMIT ?
+	`
+
+	rows, err := th.db.QueryContext(ctx, query,
+		pipelineID, messageHash, excludeBuild, contracts.FindingWindowSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query finding history: %w", err)
+	}
+	defer rows.Close()
+
+	var results []FindingResult
+	for rows.Next() {
+		var r FindingResult
+		var jobPassed int
+		var createdAtStr string
+		var severity sql.NullString
+		var confidence sql.NullFloat64
+
+		err := rows.Scan(&r.ID, &r.PipelineID, &r.MessageHash, &r.BuildNumber,
+			&r.JobName, &jobPassed, &severity, &confidence, &createdAtStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+
+		r.JobPassed = jobPassed == 1
+		if severity.Valid {
+			r.Severity = severity.String
+		}
+		if confidence.Valid {
+			r.Confidence = confidence.Float64
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		results = append(results, r)
+	}
+
+	return results, rows.Err()
+}
+
+// HasFindingBuild checks if findings exist for a specific build.
+func (th *TestHistory) HasFindingBuild(ctx context.Context, pipelineID string, buildNumber int) (bool, error) {
+	query := `SELECT COUNT(*) FROM finding_history WHERE pipeline_id = ? AND build_number = ? LIMIT 1`
+
+	var count int
+	err := th.db.QueryRowContext(ctx, query, pipelineID, buildNumber).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("failed to check finding build: %w", err)
+	}
+
+	return count > 0, nil
+}
+
+// PruneOldFindings removes findings older than the retention window.
+// Keeps the most recent keepBuilds builds per pipeline.
+func (th *TestHistory) PruneOldFindings(ctx context.Context, pipelineID string, keepBuilds int) error {
+	query := `
+	DELETE FROM finding_history
+	WHERE pipeline_id = ?
+	AND build_number < (
+		SELECT MIN(build_number) FROM (
+			SELECT DISTINCT build_number
+			FROM finding_history
+			WHERE pipeline_id = ?
+			ORDER BY build_number DESC
+			LIMIT ?
+		)
+	)
+	`
+
+	_, err := th.db.ExecContext(ctx, query, pipelineID, pipelineID, keepBuilds)
+	if err != nil {
+		return fmt.Errorf("failed to prune old findings: %w", err)
+	}
+	return nil
 }

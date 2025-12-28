@@ -829,3 +829,491 @@ func TestRecordResult_MultipleJobsSameTest(t *testing.T) {
 		t.Errorf("expected JobName='job-2', got '%s'", results[0].JobName)
 	}
 }
+
+// =============================================================================
+// Finding History Tests
+// =============================================================================
+
+func TestRecordFinding(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+	finding := FindingResult{
+		PipelineID:  "org/pipeline",
+		MessageHash: "abc123hash",
+		BuildNumber: 100,
+		JobName:     "test-job",
+		JobPassed:   false,
+		Severity:    "ERROR",
+		Confidence:  0.85,
+	}
+
+	err = th.RecordFinding(ctx, finding)
+	if err != nil {
+		t.Fatalf("failed to record finding: %v", err)
+	}
+
+	// Verify using GetFindingHistory
+	results, err := th.GetFindingHistory(ctx, "org/pipeline", "abc123hash", 0)
+	if err != nil {
+		t.Fatalf("failed to get finding history: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+
+	r := results[0]
+	if r.MessageHash != "abc123hash" {
+		t.Errorf("wrong message_hash: %s", r.MessageHash)
+	}
+	if r.JobPassed {
+		t.Error("expected job_passed=false")
+	}
+	if r.Severity != "ERROR" {
+		t.Errorf("wrong severity: %s", r.Severity)
+	}
+	if r.Confidence != 0.85 {
+		t.Errorf("wrong confidence: %f", r.Confidence)
+	}
+}
+
+func TestRecordFinding_Upsert(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Insert initial finding
+	err = th.RecordFinding(ctx, FindingResult{
+		PipelineID:  "org/pipeline",
+		MessageHash: "hash1",
+		BuildNumber: 1,
+		JobName:     "job1",
+		JobPassed:   false,
+		Confidence:  0.5,
+	})
+	if err != nil {
+		t.Fatalf("failed to record initial finding: %v", err)
+	}
+
+	// Update same record (same pipeline/hash/build/job)
+	err = th.RecordFinding(ctx, FindingResult{
+		PipelineID:  "org/pipeline",
+		MessageHash: "hash1",
+		BuildNumber: 1,
+		JobName:     "job1",
+		JobPassed:   true, // Changed
+		Confidence:  0.9,  // Changed
+	})
+	if err != nil {
+		t.Fatalf("failed to update finding: %v", err)
+	}
+
+	results, err := th.GetFindingHistory(ctx, "org/pipeline", "hash1", 0)
+	if err != nil {
+		t.Fatalf("failed to get history: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result after upsert, got %d", len(results))
+	}
+	if !results[0].JobPassed {
+		t.Error("expected result to be updated to job_passed=true")
+	}
+	if results[0].Confidence != 0.9 {
+		t.Errorf("expected confidence=0.9, got %f", results[0].Confidence)
+	}
+}
+
+func TestGetFindingNoveltyInfo_Novel(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Query for a finding with no history
+	info, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "never_seen_hash", 1)
+	if err != nil {
+		t.Fatalf("failed to get novelty info: %v", err)
+	}
+
+	if !info.IsNovel {
+		t.Error("expected finding to be novel (never seen before)")
+	}
+	if info.TotalOccurrences != 0 {
+		t.Errorf("expected TotalOccurrences=0, got %d", info.TotalOccurrences)
+	}
+	if info.SeenInPassingJobs {
+		t.Error("expected SeenInPassingJobs=false for novel finding")
+	}
+}
+
+func TestGetFindingNoveltyInfo_SeenBefore(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record findings across multiple builds
+	for i := 1; i <= 5; i++ {
+		err := th.RecordFinding(ctx, FindingResult{
+			PipelineID:  "org/pipeline",
+			MessageHash: "recurring_hash",
+			BuildNumber: i,
+			JobName:     "job1",
+			JobPassed:   false, // All in failing jobs
+		})
+		if err != nil {
+			t.Fatalf("failed to record finding: %v", err)
+		}
+	}
+
+	// Query for build 6 (excludes build 6, sees builds 1-5)
+	info, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "recurring_hash", 6)
+	if err != nil {
+		t.Fatalf("failed to get novelty info: %v", err)
+	}
+
+	if info.IsNovel {
+		t.Error("expected finding to NOT be novel (seen 5 times before)")
+	}
+	if info.TotalOccurrences != 5 {
+		t.Errorf("expected TotalOccurrences=5, got %d", info.TotalOccurrences)
+	}
+	if info.FailingOccurs != 5 {
+		t.Errorf("expected FailingOccurs=5, got %d", info.FailingOccurs)
+	}
+	if info.FirstSeenBuild != 1 {
+		t.Errorf("expected FirstSeenBuild=1, got %d", info.FirstSeenBuild)
+	}
+	if info.LastSeenBuild != 5 {
+		t.Errorf("expected LastSeenBuild=5, got %d", info.LastSeenBuild)
+	}
+}
+
+func TestGetFindingNoveltyInfo_SeenInPassing(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record findings in both passing and failing jobs
+	for i := 1; i <= 6; i++ {
+		jobPassed := i%2 == 0 // Even builds pass
+		err := th.RecordFinding(ctx, FindingResult{
+			PipelineID:  "org/pipeline",
+			MessageHash: "mixed_hash",
+			BuildNumber: i,
+			JobName:     "job1",
+			JobPassed:   jobPassed,
+		})
+		if err != nil {
+			t.Fatalf("failed to record finding: %v", err)
+		}
+	}
+
+	info, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "mixed_hash", 7)
+	if err != nil {
+		t.Fatalf("failed to get novelty info: %v", err)
+	}
+
+	if !info.SeenInPassingJobs {
+		t.Error("expected SeenInPassingJobs=true")
+	}
+	if info.PassingOccurs != 3 {
+		t.Errorf("expected PassingOccurs=3, got %d", info.PassingOccurs)
+	}
+	if info.FailingOccurs != 3 {
+		t.Errorf("expected FailingOccurs=3, got %d", info.FailingOccurs)
+	}
+}
+
+func TestGetFindingNoveltyInfo_ExcludesCurrentBuild(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record only one finding on build 5
+	err = th.RecordFinding(ctx, FindingResult{
+		PipelineID:  "org/pipeline",
+		MessageHash: "exclude_test_hash",
+		BuildNumber: 5,
+		JobName:     "job1",
+		JobPassed:   false,
+	})
+	if err != nil {
+		t.Fatalf("failed to record finding: %v", err)
+	}
+
+	// Query for build 5 - should exclude it
+	info, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "exclude_test_hash", 5)
+	if err != nil {
+		t.Fatalf("failed to get novelty info: %v", err)
+	}
+
+	if !info.IsNovel {
+		t.Error("expected finding to be novel when current build is excluded")
+	}
+	if info.TotalOccurrences != 0 {
+		t.Errorf("expected TotalOccurrences=0 (build 5 excluded), got %d", info.TotalOccurrences)
+	}
+}
+
+func TestGetFindingNoveltyInfo_WindowLimit(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Create 60 builds of history (more than FindingWindowSize=50)
+	for i := 1; i <= 60; i++ {
+		jobPassed := i <= 10 // First 10 pass, rest fail
+		err := th.RecordFinding(ctx, FindingResult{
+			PipelineID:  "org/pipeline",
+			MessageHash: "window_hash",
+			BuildNumber: i,
+			JobName:     "job1",
+			JobPassed:   jobPassed,
+		})
+		if err != nil {
+			t.Fatalf("failed to record finding: %v", err)
+		}
+	}
+
+	// Query for build 61 - should only look at last 50 builds (11-60)
+	info, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "window_hash", 61)
+	if err != nil {
+		t.Fatalf("failed to get novelty info: %v", err)
+	}
+
+	if info.TotalOccurrences != contracts.FindingWindowSize {
+		t.Errorf("expected TotalOccurrences=%d (window limit), got %d",
+			contracts.FindingWindowSize, info.TotalOccurrences)
+	}
+	// Builds 11-60 are all failing, so no passing occurrences in window
+	if info.SeenInPassingJobs {
+		t.Error("expected SeenInPassingJobs=false (passing builds outside window)")
+	}
+}
+
+func TestRecordFindingsFromCards(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	cards := []contracts.TriageCard{
+		{
+			MessageHash:     "hash1",
+			JobName:         "job-a",
+			Severity:        "ERROR",
+			ConfidenceScore: 0.9,
+			Metadata:        map[string]string{"job_state": "failed"},
+		},
+		{
+			MessageHash:     "hash2",
+			JobName:         "job-b",
+			Severity:        "FATAL",
+			ConfidenceScore: 0.95,
+			Metadata:        map[string]string{"job_state": "passed"},
+		},
+		{
+			// Missing MessageHash - should be skipped
+			JobName:  "job-c",
+			Metadata: map[string]string{"job_state": "failed"},
+		},
+		{
+			// Missing job_state - should be skipped
+			MessageHash: "hash3",
+			JobName:     "job-d",
+		},
+	}
+
+	err = th.RecordFindingsFromCards(ctx, "org/pipeline", 100, cards)
+	if err != nil {
+		t.Fatalf("failed to record findings from cards: %v", err)
+	}
+
+	// Should have 2 findings (hash1 and hash2)
+	info1, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "hash1", 0)
+	if err != nil {
+		t.Fatalf("failed to get info for hash1: %v", err)
+	}
+	if info1.IsNovel {
+		t.Error("expected hash1 to be recorded")
+	}
+	if info1.FailingOccurs != 1 {
+		t.Errorf("expected hash1 FailingOccurs=1, got %d", info1.FailingOccurs)
+	}
+
+	info2, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "hash2", 0)
+	if err != nil {
+		t.Fatalf("failed to get info for hash2: %v", err)
+	}
+	if info2.IsNovel {
+		t.Error("expected hash2 to be recorded")
+	}
+	if info2.PassingOccurs != 1 {
+		t.Errorf("expected hash2 PassingOccurs=1, got %d", info2.PassingOccurs)
+	}
+
+	// hash3 should not exist (no job_state)
+	info3, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "hash3", 0)
+	if err != nil {
+		t.Fatalf("failed to get info for hash3: %v", err)
+	}
+	if !info3.IsNovel {
+		t.Error("expected hash3 to NOT be recorded (missing job_state)")
+	}
+}
+
+func TestPruneOldFindings(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Create 20 builds of history
+	for i := 1; i <= 20; i++ {
+		err := th.RecordFinding(ctx, FindingResult{
+			PipelineID:  "org/pipeline",
+			MessageHash: "prune_hash",
+			BuildNumber: i,
+			JobName:     "job1",
+			JobPassed:   false,
+		})
+		if err != nil {
+			t.Fatalf("failed to record finding: %v", err)
+		}
+	}
+
+	// Prune keeping only last 5 builds
+	err = th.PruneOldFindings(ctx, "org/pipeline", 5)
+	if err != nil {
+		t.Fatalf("failed to prune findings: %v", err)
+	}
+
+	// Should only have 5 findings left (builds 16-20)
+	info, err := th.GetFindingNoveltyInfo(ctx, "org/pipeline", "prune_hash", 0)
+	if err != nil {
+		t.Fatalf("failed to get novelty info: %v", err)
+	}
+
+	if info.TotalOccurrences != 5 {
+		t.Errorf("expected TotalOccurrences=5 after pruning, got %d", info.TotalOccurrences)
+	}
+	if info.FirstSeenBuild != 16 {
+		t.Errorf("expected FirstSeenBuild=16 after pruning, got %d", info.FirstSeenBuild)
+	}
+	if info.LastSeenBuild != 20 {
+		t.Errorf("expected LastSeenBuild=20 after pruning, got %d", info.LastSeenBuild)
+	}
+}
+
+func TestHasFindingBuild(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Initially should not have the build
+	has, err := th.HasFindingBuild(ctx, "org/pipeline", 100)
+	if err != nil {
+		t.Fatalf("failed to check finding build: %v", err)
+	}
+	if has {
+		t.Error("expected HasFindingBuild to return false for non-existent build")
+	}
+
+	// Record a finding
+	err = th.RecordFinding(ctx, FindingResult{
+		PipelineID:  "org/pipeline",
+		MessageHash: "has_build_hash",
+		BuildNumber: 100,
+		JobName:     "job1",
+		JobPassed:   false,
+	})
+	if err != nil {
+		t.Fatalf("failed to record finding: %v", err)
+	}
+
+	// Now should have the build
+	has, err = th.HasFindingBuild(ctx, "org/pipeline", 100)
+	if err != nil {
+		t.Fatalf("failed to check finding build: %v", err)
+	}
+	if !has {
+		t.Error("expected HasFindingBuild to return true after recording finding")
+	}
+
+	// Different pipeline should not have it
+	has, err = th.HasFindingBuild(ctx, "other/pipeline", 100)
+	if err != nil {
+		t.Fatalf("failed to check finding build: %v", err)
+	}
+	if has {
+		t.Error("expected HasFindingBuild to return false for different pipeline")
+	}
+}
