@@ -449,6 +449,72 @@ func (th *TestHistory) GetFindingNoveltyInfo(ctx context.Context, pipelineID, me
 	return info, nil
 }
 
+// LoadFindingNoveltyMap loads novelty info for all findings in pipeline history.
+// Returns a map for O(1) lookup by message hash. This is more efficient than
+// calling GetFindingNoveltyInfo for each finding when processing many findings.
+func (th *TestHistory) LoadFindingNoveltyMap(ctx context.Context, pipelineID string, excludeBuild int) (map[string]FindingNoveltyInfo, error) {
+	// Get the build number cutoff for the window
+	var cutoffBuild sql.NullInt64
+	cutoffQuery := `
+	SELECT MIN(build_number) FROM (
+		SELECT DISTINCT build_number
+		FROM finding_history
+		WHERE pipeline_id = ? AND build_number != ?
+		ORDER BY build_number DESC
+		LIMIT ?
+	)
+	`
+	err := th.db.QueryRowContext(ctx, cutoffQuery, pipelineID, excludeBuild, contracts.FindingWindowSize).Scan(&cutoffBuild)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("failed to get cutoff build: %w", err)
+	}
+
+	// If no data exists, return empty map
+	if !cutoffBuild.Valid {
+		return make(map[string]FindingNoveltyInfo), nil
+	}
+
+	query := `
+	SELECT message_hash,
+	       SUM(CASE WHEN job_passed = 1 THEN 1 ELSE 0 END) as passing_occurs,
+	       SUM(CASE WHEN job_passed = 0 THEN 1 ELSE 0 END) as failing_occurs,
+	       MIN(build_number) as first_seen,
+	       MAX(build_number) as last_seen
+	FROM finding_history
+	WHERE pipeline_id = ?
+	  AND build_number != ?
+	  AND build_number >= ?
+	GROUP BY message_hash
+	`
+
+	rows, err := th.db.QueryContext(ctx, query, pipelineID, excludeBuild, cutoffBuild.Int64)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query finding history: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]FindingNoveltyInfo)
+	for rows.Next() {
+		var hash string
+		var info FindingNoveltyInfo
+		err := rows.Scan(&hash, &info.PassingOccurs, &info.FailingOccurs,
+			&info.FirstSeenBuild, &info.LastSeenBuild)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		info.TotalOccurrences = info.PassingOccurs + info.FailingOccurs
+		info.SeenInPassingJobs = info.PassingOccurs > 0
+		info.IsNovel = false // If it's in the map, it's not novel
+		result[hash] = info
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
 // GetFindingHistory retrieves the recent history for a specific finding hash.
 func (th *TestHistory) GetFindingHistory(ctx context.Context, pipelineID, messageHash string, excludeBuild int) ([]FindingResult, error) {
 	query := `

@@ -1317,3 +1317,154 @@ func TestHasFindingBuild(t *testing.T) {
 		t.Error("expected HasFindingBuild to return false for different pipeline")
 	}
 }
+
+func TestLoadFindingNoveltyMap(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Create findings with different characteristics
+	// hash1: only in failing jobs
+	// hash2: only in passing jobs
+	// hash3: in both passing and failing jobs
+	findings := []FindingResult{
+		{PipelineID: "org/pipeline", MessageHash: "hash1", BuildNumber: 1, JobName: "job1", JobPassed: false},
+		{PipelineID: "org/pipeline", MessageHash: "hash1", BuildNumber: 2, JobName: "job1", JobPassed: false},
+		{PipelineID: "org/pipeline", MessageHash: "hash2", BuildNumber: 1, JobName: "job2", JobPassed: true},
+		{PipelineID: "org/pipeline", MessageHash: "hash2", BuildNumber: 3, JobName: "job2", JobPassed: true},
+		{PipelineID: "org/pipeline", MessageHash: "hash3", BuildNumber: 1, JobName: "job3", JobPassed: false},
+		{PipelineID: "org/pipeline", MessageHash: "hash3", BuildNumber: 2, JobName: "job3", JobPassed: true},
+		{PipelineID: "org/pipeline", MessageHash: "hash3", BuildNumber: 3, JobName: "job3", JobPassed: false},
+	}
+
+	for _, f := range findings {
+		if err := th.RecordFinding(ctx, f); err != nil {
+			t.Fatalf("failed to record finding: %v", err)
+		}
+	}
+
+	// Load the map for build 10 (excludes nothing since no build 10)
+	noveltyMap, err := th.LoadFindingNoveltyMap(ctx, "org/pipeline", 10)
+	if err != nil {
+		t.Fatalf("failed to load novelty map: %v", err)
+	}
+
+	// Check hash1: 2 failing occurrences
+	if info, ok := noveltyMap["hash1"]; !ok {
+		t.Error("expected hash1 in map")
+	} else {
+		if info.IsNovel {
+			t.Error("hash1 should not be novel")
+		}
+		if info.SeenInPassingJobs {
+			t.Error("hash1 should not be seen in passing jobs")
+		}
+		if info.FailingOccurs != 2 {
+			t.Errorf("hash1 expected FailingOccurs=2, got %d", info.FailingOccurs)
+		}
+	}
+
+	// Check hash2: 2 passing occurrences
+	if info, ok := noveltyMap["hash2"]; !ok {
+		t.Error("expected hash2 in map")
+	} else {
+		if !info.SeenInPassingJobs {
+			t.Error("hash2 should be seen in passing jobs")
+		}
+		if info.PassingOccurs != 2 {
+			t.Errorf("hash2 expected PassingOccurs=2, got %d", info.PassingOccurs)
+		}
+	}
+
+	// Check hash3: mixed
+	if info, ok := noveltyMap["hash3"]; !ok {
+		t.Error("expected hash3 in map")
+	} else {
+		if !info.SeenInPassingJobs {
+			t.Error("hash3 should be seen in passing jobs")
+		}
+		if info.PassingOccurs != 1 {
+			t.Errorf("hash3 expected PassingOccurs=1, got %d", info.PassingOccurs)
+		}
+		if info.FailingOccurs != 2 {
+			t.Errorf("hash3 expected FailingOccurs=2, got %d", info.FailingOccurs)
+		}
+		if info.FirstSeenBuild != 1 {
+			t.Errorf("hash3 expected FirstSeenBuild=1, got %d", info.FirstSeenBuild)
+		}
+		if info.LastSeenBuild != 3 {
+			t.Errorf("hash3 expected LastSeenBuild=3, got %d", info.LastSeenBuild)
+		}
+	}
+
+	// Check novel hash (not in map)
+	if _, ok := noveltyMap["never_seen"]; ok {
+		t.Error("never_seen should not be in map")
+	}
+}
+
+func TestLoadFindingNoveltyMap_ExcludesBuild(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Record findings on builds 1 and 2
+	th.RecordFinding(ctx, FindingResult{
+		PipelineID: "org/pipeline", MessageHash: "hash1", BuildNumber: 1, JobName: "job1", JobPassed: false,
+	})
+	th.RecordFinding(ctx, FindingResult{
+		PipelineID: "org/pipeline", MessageHash: "hash1", BuildNumber: 2, JobName: "job1", JobPassed: true,
+	})
+
+	// Load excluding build 2
+	noveltyMap, err := th.LoadFindingNoveltyMap(ctx, "org/pipeline", 2)
+	if err != nil {
+		t.Fatalf("failed to load novelty map: %v", err)
+	}
+
+	info := noveltyMap["hash1"]
+	// Should only see build 1 (failing)
+	if info.TotalOccurrences != 1 {
+		t.Errorf("expected TotalOccurrences=1 (build 2 excluded), got %d", info.TotalOccurrences)
+	}
+	if info.SeenInPassingJobs {
+		t.Error("should not be seen in passing jobs (build 2 excluded)")
+	}
+}
+
+func TestLoadFindingNoveltyMap_Empty(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "test.db")
+
+	th, err := NewTestHistory(dbPath)
+	if err != nil {
+		t.Fatalf("failed to create TestHistory: %v", err)
+	}
+	defer th.Close()
+
+	ctx := context.Background()
+
+	// Load from empty database
+	noveltyMap, err := th.LoadFindingNoveltyMap(ctx, "org/pipeline", 1)
+	if err != nil {
+		t.Fatalf("failed to load novelty map: %v", err)
+	}
+
+	if len(noveltyMap) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(noveltyMap))
+	}
+}
