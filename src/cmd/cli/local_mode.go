@@ -14,6 +14,7 @@ import (
 	"destill-agent/src/contracts"
 	"destill-agent/src/pipeline"
 	"destill-agent/src/provider"
+	"destill-agent/src/store"
 	"destill-agent/src/tui"
 )
 
@@ -110,6 +111,7 @@ func (lm *LocalMode) Close() {
 // displayTUI launches the interactive terminal UI with pre-subscribed channels.
 // If channels is nil and initialCards is provided (from cache), displays them immediately.
 // If channels is provided, streams live updates from the broker as analysis progresses.
+// After the TUI exits, collected data is persisted to SQLite for novelty/flaky detection.
 func displayTUI(channels *tui.BrokerChannels, initialCards []contracts.TriageCard) error {
 	// Show appropriate startup message
 	if channels == nil || channels.CardChan == nil {
@@ -126,7 +128,34 @@ func displayTUI(channels *tui.BrokerChannels, initialCards []contracts.TriageCar
 		fmt.Println("[DEBUG] Artifact debug logging enabled - writing to /tmp/destill-debug.log")
 	}
 
-	return tui.StartWithChannels(channels, initialCards)
+	result, err := tui.StartWithChannels(channels, initialCards)
+	if err != nil {
+		return err
+	}
+
+	// Persist collected data to SQLite (best-effort, don't fail if it errors)
+	recordAnalysisResult(result)
+
+	return nil
+}
+
+// recordAnalysisResult persists the analysis result to SQLite for novelty/flaky detection.
+func recordAnalysisResult(result *tui.AnalysisResult) {
+	if result == nil || (len(result.Cards) == 0 && len(result.TestResults) == 0) {
+		return
+	}
+	if result.PipelineID == "" || result.BuildNumber == 0 {
+		return
+	}
+
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return
+	}
+	defer history.Close()
+
+	ctx := context.Background()
+	_ = history.RecordBuildData(ctx, result.PipelineID, result.BuildNumber, result.TestResults, result.Cards)
 }
 
 // displayJSON collects findings from the broker and outputs them as JSON.

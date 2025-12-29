@@ -89,7 +89,7 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	limit := request.GetInt("limit", 15)
 
 	// Run analysis
-	cards, buildInfo, testSummary, err := s.runAnalysis(ctx, url)
+	cards, testResults, buildInfo, testSummary, err := s.runAnalysis(ctx, url)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("analysis failed: %v", err)), nil
 	}
@@ -105,8 +105,8 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError(fmt.Sprintf("failed to store findings: %v", err)), nil
 	}
 
-	// Record findings to SQLite history for novelty detection
-	s.recordFindingsToHistory(ctx, buildInfo, cards)
+	// Record to SQLite history for novelty/flaky detection (best-effort)
+	s.recordBuildData(ctx, buildInfo, testResults, cards)
 
 	// Tier findings on read
 	response := TierFindings(cards, limit)
@@ -158,14 +158,15 @@ func (s *Server) handleGetFindingDetails(ctx context.Context, request mcp.CallTo
 }
 
 // runAnalysis runs the full analysis pipeline and collects cards.
-func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, BuildInfo, *contracts.TestSummary, error) {
+// Returns cards, test results, build info, and test summary.
+func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, []contracts.TestResult, BuildInfo, *contracts.TestSummary, error) {
 	// Validate URL and token upfront to fail fast
 	ref, err := provider.ParseURL(buildURL)
 	if err != nil {
-		return nil, BuildInfo{}, nil, provider.WrapError(err)
+		return nil, nil, BuildInfo{}, nil, provider.WrapError(err)
 	}
 	if err := provider.ValidateToken(ref); err != nil {
-		return nil, BuildInfo{}, nil, provider.WrapError(err)
+		return nil, nil, BuildInfo{}, nil, provider.WrapError(err)
 	}
 
 	// Create in-memory broker and start pipeline
@@ -178,19 +179,19 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	// Subscribe to topics BEFORE starting pipeline to avoid race conditions
 	findingsCh, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "mcp-server-findings")
 	if err != nil {
-		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to findings: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to findings: %w", err)
 	}
 	testsCh, err := msgBroker.Subscribe(ctx, contracts.TopicTestResults, "mcp-server-tests")
 	if err != nil {
-		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
 	}
 	metadataCh, err := msgBroker.Subscribe(ctx, contracts.TopicBuildMetadata, "mcp-server-metadata")
 	if err != nil {
-		return nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
 	}
 
 	if err := pipeline.Start(msgBroker, pipelineCtx); err != nil {
-		return nil, BuildInfo{}, nil, fmt.Errorf("failed to start pipeline: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to start pipeline: %w", err)
 	}
 
 	// Submit analysis request
@@ -202,14 +203,14 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	}
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, BuildInfo{}, nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
 
 	// Collect findings, test results, and build metadata with timeout
 	cards, testResults, buildMeta, err := s.collectFromChannels(ctx, findingsCh, testsCh, metadataCh)
 	if err != nil {
-		return nil, BuildInfo{}, nil, err
+		return nil, nil, BuildInfo{}, nil, err
 	}
 
 	// Build info from authoritative metadata (fallback to card-based extraction)
@@ -221,7 +222,7 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 		testSummary = buildTestSummary(requestID, testResults)
 	}
 
-	return cards, buildInfo, testSummary, nil
+	return cards, testResults, buildInfo, testSummary, nil
 }
 
 // collectFromChannels collects findings, test results, and build metadata from pre-subscribed channels until timeout.
@@ -347,10 +348,13 @@ func generateRequestID() string {
 	return fmt.Sprintf("req-%s-%s", timestamp, hex.EncodeToString(randomBytes))
 }
 
-// recordFindingsToHistory records findings to SQLite for novelty detection.
-// This is best-effort; errors are logged but don't fail the request.
-func (s *Server) recordFindingsToHistory(ctx context.Context, buildInfo BuildInfo, cards []contracts.TriageCard) {
-	if len(cards) == 0 || buildInfo.Number == "" {
+// recordBuildData records test results and findings to SQLite for flaky/novelty detection.
+// This is best-effort; errors don't fail the request.
+func (s *Server) recordBuildData(ctx context.Context, buildInfo BuildInfo, testResults []contracts.TestResult, cards []contracts.TriageCard) {
+	if len(cards) == 0 && len(testResults) == 0 {
+		return
+	}
+	if buildInfo.Number == "" {
 		return
 	}
 
@@ -377,8 +381,8 @@ func (s *Server) recordFindingsToHistory(ctx context.Context, buildInfo BuildInf
 	}
 	defer history.Close()
 
-	// Record findings (best-effort, don't fail if it errors)
-	_ = history.RecordFindingsFromCards(ctx, pipelineID, buildNumber, cards)
+	// Record all build data (best-effort, don't fail if it errors)
+	_ = history.RecordBuildData(ctx, pipelineID, buildNumber, testResults, cards)
 }
 
 // buildTestSummary creates a TestSummary from collected test results.

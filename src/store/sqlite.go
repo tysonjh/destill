@@ -129,6 +129,41 @@ func (th *TestHistory) migrate() error {
 	return nil
 }
 
+// RecordBuildData stores both test results and findings for a build.
+// This is the unified entry point for persisting build analysis data.
+// Either testResults or cards can be nil if not available.
+func (th *TestHistory) RecordBuildData(ctx context.Context, pipelineID string, buildNumber int, testResults []contracts.TestResult, cards []contracts.TriageCard) error {
+	if pipelineID == "" || buildNumber == 0 {
+		return nil // Nothing to record without identifiers
+	}
+
+	// Record test results
+	for _, tr := range testResults {
+		result := TestResult{
+			PipelineID:     pipelineID,
+			TestName:       tr.TestName,
+			BuildNumber:    buildNumber,
+			Passed:         tr.Passed,
+			FailureMessage: tr.FailureMessage,
+			BuildURL:       tr.BuildURL,
+			JobName:        tr.JobName,
+			CreatedAt:      time.Now().UTC(),
+		}
+		if err := th.RecordResult(ctx, result); err != nil {
+			return fmt.Errorf("failed to record test result: %w", err)
+		}
+	}
+
+	// Record findings
+	if len(cards) > 0 {
+		if err := th.RecordFindingsFromCards(ctx, pipelineID, buildNumber, cards); err != nil {
+			return fmt.Errorf("failed to record findings: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // RecordResult stores a test result. Uses INSERT OR REPLACE to handle duplicates.
 func (th *TestHistory) RecordResult(ctx context.Context, result TestResult) error {
 	query := `

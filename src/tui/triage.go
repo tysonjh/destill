@@ -331,26 +331,38 @@ func Start(cards []contracts.TriageCard) error {
 // If broker is nil, uses the provided initial cards only (no streaming).
 // If broker is provided, subscribes to ci_failures_ranked for live updates.
 // Invariant: If broker is not nil, initialCards must be empty.
+// Note: This variant discards the analysis result. Use StartWithChannels directly
+// if you need to persist the collected data.
 func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) error {
 	// Subscribe to broker if provided
 	channels, err := SubscribeToBroker(brk)
 	if err != nil {
 		return err
 	}
-	return StartWithChannels(channels, initialCards)
+	_, err = StartWithChannels(channels, initialCards)
+	return err
+}
+
+// AnalysisResult contains the data collected during TUI session for persistence.
+type AnalysisResult struct {
+	Cards       []contracts.TriageCard
+	TestResults []contracts.TestResult
+	PipelineID  string
+	BuildNumber int
 }
 
 // StartWithChannels initializes the TUI with pre-subscribed broker channels.
 // Use this when you need to subscribe BEFORE submitting analysis to avoid race conditions.
 // If channels is nil or has nil CardChan, uses the provided initial cards only (no streaming).
 // Invariant: If channels has non-nil CardChan, initialCards must be empty.
-func StartWithChannels(channels *BrokerChannels, initialCards []contracts.TriageCard) error {
+// Returns the collected analysis data for persistence after TUI exits.
+func StartWithChannels(channels *BrokerChannels, initialCards []contracts.TriageCard) (*AnalysisResult, error) {
 	// Determine if we're in streaming mode
 	streaming := channels != nil && channels.CardChan != nil
 
 	// Enforce invariant: streaming and initialCards are mutually exclusive
 	if streaming && len(initialCards) > 0 {
-		return fmt.Errorf("invalid arguments: streaming channels and initialCards are mutually exclusive")
+		return nil, fmt.Errorf("invalid arguments: streaming channels and initialCards are mutually exclusive")
 	}
 
 	styles := DefaultStyles()
@@ -426,11 +438,34 @@ func StartWithChannels(channels *BrokerChannels, initialCards []contracts.Triage
 	model.applyFilter()
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err := p.Run()
+	finalModel, err := p.Run()
 	if cancel != nil {
 		cancel()
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract collected data from final model
+	result := &AnalysisResult{}
+	if m, ok := finalModel.(MainModel); ok {
+		// Extract cards from items
+		for _, item := range m.items {
+			result.Cards = append(result.Cards, item.Card)
+		}
+		result.TestResults = m.testResults
+
+		// Extract pipeline ID and build number from metadata or first card
+		if m.buildMetadata != nil {
+			result.PipelineID = extractPipelineID(m.buildMetadata.URL)
+			result.BuildNumber = extractBuildNumberInt(m.buildMetadata.URL)
+		} else if len(result.Cards) > 0 {
+			result.PipelineID = extractPipelineID(result.Cards[0].BuildURL)
+			result.BuildNumber = extractBuildNumberInt(result.Cards[0].BuildURL)
+		}
+	}
+
+	return result, nil
 }
 
 // hashMapToSortedItems converts the hash map to a sorted slice of items
