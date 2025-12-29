@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -103,6 +104,9 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	if err := s.store.Store(ctx, requestID, cards); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to store findings: %v", err)), nil
 	}
+
+	// Record findings to SQLite history for novelty detection
+	s.recordFindingsToHistory(ctx, buildInfo, cards)
 
 	// Tier findings on read
 	response := TierFindings(cards, limit)
@@ -341,6 +345,40 @@ func generateRequestID() string {
 	randomBytes := make([]byte, 4)
 	rand.Read(randomBytes)
 	return fmt.Sprintf("req-%s-%s", timestamp, hex.EncodeToString(randomBytes))
+}
+
+// recordFindingsToHistory records findings to SQLite for novelty detection.
+// This is best-effort; errors are logged but don't fail the request.
+func (s *Server) recordFindingsToHistory(ctx context.Context, buildInfo BuildInfo, cards []contracts.TriageCard) {
+	if len(cards) == 0 || buildInfo.Number == "" {
+		return
+	}
+
+	// Parse build number
+	buildNumber, err := strconv.Atoi(buildInfo.Number)
+	if err != nil || buildNumber == 0 {
+		return
+	}
+
+	// Build pipeline ID from URL (e.g., "org/pipeline")
+	ref, err := provider.ParseURL(buildInfo.URL)
+	if err != nil {
+		return
+	}
+	pipelineID := ref.Metadata["org"] + "/" + ref.Metadata["pipeline"]
+	if pipelineID == "/" {
+		return
+	}
+
+	// Open test history (same pattern as buildTestSummary)
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return
+	}
+	defer history.Close()
+
+	// Record findings (best-effort, don't fail if it errors)
+	_ = history.RecordFindingsFromCards(ctx, pipelineID, buildNumber, cards)
 }
 
 // buildTestSummary creates a TestSummary from collected test results.
