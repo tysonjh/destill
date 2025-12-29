@@ -74,11 +74,74 @@ type buildMetadataMsg struct {
 	metadata contracts.BuildMetadata
 }
 
+// loadNoveltyMap attempts to load novelty info from the history database.
+// Returns an empty map if history is unavailable (silently ignores errors).
+func loadNoveltyMap(cards []contracts.TriageCard) map[string]store.FindingNoveltyInfo {
+	if len(cards) == 0 {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+
+	// Try to open history store with default path
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+	defer history.Close()
+
+	// Extract pipeline ID and build number from first card
+	pipelineID := extractPipelineID(cards[0].BuildURL)
+	buildNumber := extractBuildNumberInt(cards[0].BuildURL)
+	if pipelineID == "" {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+
+	// Load novelty map
+	ctx := context.Background()
+	noveltyMap, err := history.LoadFindingNoveltyMap(ctx, pipelineID, buildNumber)
+	if err != nil {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+
+	return noveltyMap
+}
+
+// extractPipelineID extracts the pipeline identifier from a build URL.
+// For Buildkite: "org/pipeline", for GitHub: "owner/repo"
+func extractPipelineID(buildURL string) string {
+	// Buildkite: https://buildkite.com/org/pipeline/builds/123
+	bkRegex := regexp.MustCompile(`buildkite\.com/([^/]+/[^/]+)/builds/`)
+	if matches := bkRegex.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// GitHub: https://github.com/owner/repo/actions/runs/123
+	ghRegex := regexp.MustCompile(`github\.com/([^/]+/[^/]+)/actions/runs/`)
+	if matches := ghRegex.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	return ""
+}
+
+// extractBuildNumberInt extracts the build number as an integer from a build URL.
+func extractBuildNumberInt(buildURL string) int {
+	buildNum := extractBuildNumber(buildURL)
+	if buildNum == "" {
+		return 0
+	}
+	var num int
+	fmt.Sscanf(buildNum, "%d", &num)
+	return num
+}
+
 // buildInitialState processes the initial cards and builds the state needed for the TUI.
 func buildInitialState(cards []contracts.TriageCard) *initialState {
 	hashMap := make(map[string]*Item)
 	jobsDiscovered := make(map[string]bool)
 	jobsFailed := make(map[string]bool)
+
+	// Try to load novelty data from history (silently ignore errors)
+	noveltyMap := loadNoveltyMap(cards)
 
 	for _, card := range cards {
 		if existing, ok := hashMap[card.MessageHash]; ok {
@@ -86,6 +149,13 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 			existing.Card.SetRecurrenceCount(existing.GetRecurrence() + 1)
 		} else {
 			item := Item{Card: card, Rank: 0}
+			// Apply novelty info if available
+			if novelty, ok := noveltyMap[card.MessageHash]; ok {
+				item.Novelty = novelty
+			} else {
+				// Not in history = novel finding
+				item.Novelty = store.FindingNoveltyInfo{IsNovel: true}
+			}
 			hashMap[card.MessageHash] = &item
 		}
 		if !jobsDiscovered[card.JobName] {
@@ -225,13 +295,15 @@ type MainModel struct {
 	testResultsChan   <-chan broker.Message // Channel receiving test results
 	buildMetadataChan <-chan broker.Message // Channel receiving build metadata
 	pendingCards      []Item                // Cards waiting to be merged
-	hashMap         map[string]*Item      // For grouping by hash
-	status          LoadStatus            // Current loading status
-	cardCount       int                   // Total cards received (above threshold)
-	droppedCount    int                   // Cards dropped due to low confidence
-	jobsDiscovered  map[string]bool       // Jobs we've seen so far
-	ctx             context.Context       // Context for broker operations
-	cancel          context.CancelFunc    // Cancel function
+	hashMap           map[string]*Item      // For grouping by hash
+	noveltyMap        map[string]store.FindingNoveltyInfo // Cached novelty info
+	noveltyLoaded     bool                  // Whether novelty map has been loaded
+	status            LoadStatus            // Current loading status
+	cardCount         int                   // Total cards received (above threshold)
+	droppedCount      int                   // Cards dropped due to low confidence
+	jobsDiscovered    map[string]bool       // Jobs we've seen so far
+	ctx               context.Context       // Context for broker operations
+	cancel            context.CancelFunc    // Cancel function
 
 	// Test results tracking
 	testResults []contracts.TestResult
@@ -561,8 +633,19 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		failed := msg.card.Metadata["job_state"] == "failed"
 		m.header.AddJob(msg.card.JobName, failed)
 
-		// Add card to pending
+		// Load novelty map on first card (if not already loaded)
+		if !m.noveltyLoaded && msg.card.BuildURL != "" {
+			m.noveltyMap = loadNoveltyMap([]contracts.TriageCard{msg.card})
+			m.noveltyLoaded = true
+		}
+
+		// Add card to pending with novelty info
 		item := Item{Card: msg.card, Rank: 0}
+		if novelty, ok := m.noveltyMap[msg.card.MessageHash]; ok {
+			item.Novelty = novelty
+		} else {
+			item.Novelty = store.FindingNoveltyInfo{IsNovel: true}
+		}
 		m.pendingCards = append(m.pendingCards, item)
 		// Stay on "ALL" - failed job findings are boosted to top by confidence
 		m.header.SetPendingCount(len(m.pendingCards))
