@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,8 +17,8 @@ import (
 	"destill-agent/src/broker"
 	"destill-agent/src/buildkite"
 	"destill-agent/src/contracts"
-	"destill-agent/src/ingest"
 	"destill-agent/src/mcp"
+	analysispipeline "destill-agent/src/pipeline"
 	"destill-agent/src/provider"
 	"destill-agent/src/store"
 	"destill-agent/src/tui"
@@ -587,23 +586,6 @@ Environment variables:
 
 		fmt.Printf("Found %d builds\n", len(builds))
 
-		// Create provider reference for Buildkite
-		baseRef := &provider.BuildRef{
-			Provider: "buildkite",
-			BuildID:  "0", // Placeholder, will be overridden per-build
-			Metadata: map[string]string{
-				"org":      org,
-				"pipeline": pipeline,
-			},
-		}
-
-		// Create provider for artifact fetching
-		prov, err := provider.GetProvider(baseRef)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create provider: %v\n", err)
-			os.Exit(1)
-		}
-
 		// Filter and process builds with rate limiting
 		var skippedRunning, skippedProcessed, processed, noArtifacts int
 		for i, build := range builds {
@@ -627,37 +609,12 @@ Environment variables:
 			// Process this build with retry on rate limit
 			fmt.Printf("  Processing build #%d (%s)...", build.Number, build.State)
 
-			// Create build ref for this specific build
-			buildNumStr := strconv.Itoa(build.Number)
-			ref := &provider.BuildRef{
-				Provider: "buildkite",
-				BuildID:  buildNumStr,
-				Metadata: map[string]string{
-					"org":      org,
-					"pipeline": pipeline,
-				},
-			}
-
-			// Fetch and process with retry on rate limit
-			var fullBuild *provider.Build
-			var results []contracts.TestResult
+			// Run full analysis pipeline (logs + artifacts) with retry on rate limit
+			var analysisResult *analysispipeline.AnalysisResult
 			maxRetries := 3
 
 			for attempt := 0; attempt < maxRetries; attempt++ {
-				// Fetch full build details (we need job info)
-				fullBuild, err = prov.FetchBuild(ctx, ref)
-				if err != nil {
-					if strings.Contains(err.Error(), "429") {
-						waitTime := time.Duration(attempt+1) * 2 * time.Second
-						fmt.Printf(" rate limited, waiting %v...", waitTime)
-						time.Sleep(waitTime)
-						continue
-					}
-					break
-				}
-
-				// Process artifacts
-				results, err = ingest.ProcessArtifactsForBuild(ctx, prov, ref, fullBuild, history, build.WebURL)
+				analysisResult, err = analysispipeline.AnalyzeBuild(ctx, build.WebURL)
 				if err != nil {
 					if strings.Contains(err.Error(), "429") {
 						waitTime := time.Duration(attempt+1) * 2 * time.Second
@@ -675,20 +632,29 @@ Environment variables:
 				continue
 			}
 
-			if len(results) == 0 {
-				fmt.Printf(" no test artifacts\n")
+			// Store findings to history (test results are stored by artifact agent)
+			pipelineID := org + "/" + pipeline
+			if len(analysisResult.Cards) > 0 {
+				_ = history.RecordFindingsFromCards(ctx, pipelineID, build.Number, analysisResult.Cards)
+			}
+
+			// Report results
+			testCount := len(analysisResult.TestResults)
+			findingCount := len(analysisResult.Cards)
+			if testCount == 0 && findingCount == 0 {
+				fmt.Printf(" no data\n")
 				noArtifacts++
 			} else {
-				fmt.Printf(" %d tests\n", len(results))
+				fmt.Printf(" %d tests, %d findings\n", testCount, findingCount)
 				processed++
 			}
 		}
 
 		fmt.Printf("\nSync complete:\n")
-		fmt.Printf("  Processed: %d builds (%d with test artifacts)\n", processed+noArtifacts, processed)
+		fmt.Printf("  Processed: %d builds (%d with data)\n", processed+noArtifacts, processed)
 		fmt.Printf("  Skipped (running): %d\n", skippedRunning)
 		fmt.Printf("  Skipped (already processed): %d\n", skippedProcessed)
-		fmt.Printf("\nTest history stored in: %s\n", dbPath)
+		fmt.Printf("\nHistory stored in: %s\n", dbPath)
 	},
 }
 

@@ -4,9 +4,13 @@ package pipeline
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"destill-agent/src/analyze"
 	"destill-agent/src/broker"
@@ -87,4 +91,110 @@ func Start(msgBroker broker.Broker, ctx context.Context) error {
 	}()
 
 	return nil
+}
+
+// AnalysisResult contains the results of analyzing a build.
+type AnalysisResult struct {
+	Cards       []contracts.TriageCard
+	TestResults []contracts.TestResult
+	Metadata    *contracts.BuildMetadata
+}
+
+// AnalyzeBuild runs the full analysis pipeline for a single build URL.
+// This is a synchronous operation that starts the pipeline, submits the request,
+// collects results, and returns them. Used by both MCP server and sync command.
+func AnalyzeBuild(ctx context.Context, buildURL string) (*AnalysisResult, error) {
+	// Create in-memory broker and start pipeline
+	msgBroker := broker.NewInMemoryBroker()
+	defer msgBroker.Close()
+
+	pipelineCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Subscribe to topics BEFORE starting pipeline to avoid race conditions
+	findingsCh, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "pipeline-findings")
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to findings: %w", err)
+	}
+	testsCh, err := msgBroker.Subscribe(ctx, contracts.TopicTestResults, "pipeline-tests")
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to test results: %w", err)
+	}
+	metadataCh, err := msgBroker.Subscribe(ctx, contracts.TopicBuildMetadata, "pipeline-metadata")
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
+	}
+
+	if err := Start(msgBroker, pipelineCtx); err != nil {
+		return nil, fmt.Errorf("failed to start pipeline: %w", err)
+	}
+
+	// Submit analysis request
+	requestID := generateRequestID()
+	req := contracts.AnalysisRequest{
+		RequestID: requestID,
+		BuildURL:  buildURL,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	reqData, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
+
+	// Collect results with timeout
+	result, err := collectResults(ctx, findingsCh, testsCh, metadataCh)
+	if err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+// collectResults collects findings, test results, and build metadata from channels.
+func collectResults(ctx context.Context, findingsCh, testsCh, metadataCh <-chan broker.Message) (*AnalysisResult, error) {
+	result := &AnalysisResult{}
+	timeout := time.After(120 * time.Second)
+	lastActivity := time.Now()
+
+	for {
+		select {
+		case msg := <-findingsCh:
+			var card contracts.TriageCard
+			if err := json.Unmarshal(msg.Value, &card); err == nil {
+				result.Cards = append(result.Cards, card)
+				lastActivity = time.Now()
+			}
+		case msg := <-testsCh:
+			var tr contracts.TestResult
+			if err := json.Unmarshal(msg.Value, &tr); err == nil {
+				result.TestResults = append(result.TestResults, tr)
+				lastActivity = time.Now()
+			}
+		case msg := <-metadataCh:
+			var meta contracts.BuildMetadata
+			if err := json.Unmarshal(msg.Value, &meta); err == nil {
+				result.Metadata = &meta
+				lastActivity = time.Now()
+			}
+		case <-timeout:
+			return result, nil
+		case <-ctx.Done():
+			return result, ctx.Err()
+		default:
+			// If we have cards and no activity for 10 seconds, we're done
+			if time.Since(lastActivity) > 10*time.Second && len(result.Cards) > 0 {
+				return result, nil
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+}
+
+// generateRequestID creates a unique request identifier.
+func generateRequestID() string {
+	timestamp := time.Now().UTC().Format("20060102T150405")
+	randomBytes := make([]byte, 4)
+	rand.Read(randomBytes)
+	return fmt.Sprintf("req-%s-%s", timestamp, hex.EncodeToString(randomBytes))
 }
