@@ -58,6 +58,7 @@ type Finding struct {
 	Severity   string   `json:"sev"`
 	Confidence float64  `json:"conf"`
 	Job        string   `json:"job"`
+	Novel      bool     `json:"novel,omitempty"`      // Never seen before in build history
 	InPassing  bool     `json:"in_passing,omitempty"` // Also appears in passing jobs
 	Pre        []string `json:"pre,omitempty"`        // Pre-context lines
 	Post       []string `json:"post,omitempty"`       // Post-context lines

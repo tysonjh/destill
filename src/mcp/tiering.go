@@ -4,6 +4,7 @@ import (
 	"destill-agent/src/contracts"
 	"destill-agent/src/ranking"
 	"destill-agent/src/sanitize"
+	"destill-agent/src/store"
 )
 
 // Context line limits per tier.
@@ -37,10 +38,19 @@ func CardToFinding(card contracts.TriageCard) Finding {
 
 // convertToFinding converts a TriageCard to an LLM-ready Finding.
 // Context is truncated to reduce token usage.
-func convertToFinding(card contracts.TriageCard, alsoInPassing bool) Finding {
+// noveltyMap is optional; if nil or hash not found, finding is considered novel.
+func convertToFinding(card contracts.TriageCard, alsoInPassing bool, noveltyMap map[string]store.FindingNoveltyInfo) Finding {
 	// Truncate context for LLM response
 	preContext := truncatePreContext(card.PreContext, MCPPreContext)
 	postContext := truncateContext(card.PostContext, MCPPostContext)
+
+	// Determine novelty: if not in the map, it's novel (never seen before)
+	isNovel := true
+	if noveltyMap != nil {
+		if _, found := noveltyMap[card.MessageHash]; found {
+			isNovel = false
+		}
+	}
 
 	return Finding{
 		ID:         card.MessageHash,
@@ -48,6 +58,7 @@ func convertToFinding(card contracts.TriageCard, alsoInPassing bool) Finding {
 		Severity:   card.Severity,
 		Confidence: card.ConfidenceScore,
 		Job:        card.JobName,
+		Novel:      isNovel,
 		InPassing:  alsoInPassing,
 		Pre:        sanitize.CleanLines(preContext),
 		Post:       sanitize.CleanLines(postContext),
@@ -75,10 +86,11 @@ func truncatePreContext(lines []string, limit int) []string {
 // TierFindings groups cards into tiers and returns a TieredResponse.
 // limit specifies max findings for tier 1 (must be > 0). Tier 2/3 use
 // proportionally smaller limits to reduce output size.
+// noveltyMap is optional; if provided, findings are marked as novel/not novel.
 //
 // Note: Build field is not populated here - caller should set it.
 // Note: Tier 2 (frequency spikes) is not yet implemented.
-func TierFindings(cards []contracts.TriageCard, limit int) TieredResponse {
+func TierFindings(cards []contracts.TriageCard, limit int, noveltyMap map[string]store.FindingNoveltyInfo) TieredResponse {
 	// Calculate per-tier limits
 	tier1Limit := DefaultTier1Limit
 	tier3Limit := DefaultTier3Limit
@@ -94,8 +106,8 @@ func TierFindings(cards []contracts.TriageCard, limit int) TieredResponse {
 	jobStates := ranking.BuildJobStateMap(cards)
 
 	// Convert ranked cards to Findings with limits
-	unique := convertRankedToFindings(tiered.Unique, jobStates, tier1Limit)
-	noise := convertRankedToFindings(tiered.Noise, jobStates, tier3Limit)
+	unique := convertRankedToFindings(tiered.Unique, jobStates, tier1Limit, noveltyMap)
+	noise := convertRankedToFindings(tiered.Noise, jobStates, tier3Limit, noveltyMap)
 
 	return TieredResponse{
 		Tier1UniqueFailures:  unique,
@@ -105,14 +117,14 @@ func TierFindings(cards []contracts.TriageCard, limit int) TieredResponse {
 }
 
 // convertRankedToFindings converts RankedCards to Findings with a limit.
-func convertRankedToFindings(ranked []ranking.RankedCard, jobStates map[string]string, limit int) []Finding {
+func convertRankedToFindings(ranked []ranking.RankedCard, jobStates map[string]string, limit int, noveltyMap map[string]store.FindingNoveltyInfo) []Finding {
 	var findings []Finding
 	for _, rc := range ranked {
 		if len(findings) >= limit {
 			break
 		}
 		alsoInPassing := jobStates[rc.Card.NormalizedMsg] == "both"
-		findings = append(findings, convertToFinding(rc.Card, alsoInPassing))
+		findings = append(findings, convertToFinding(rc.Card, alsoInPassing, noveltyMap))
 	}
 	return findings
 }

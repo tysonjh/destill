@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"destill-agent/src/contracts"
+	"destill-agent/src/store"
 )
 
 // Note: Tests for BuildJobStateMap and ClassifyTier are in src/ranking/ranking_test.go
@@ -22,7 +23,7 @@ func TestConvertToFinding(t *testing.T) {
 		},
 	}
 
-	finding := convertToFinding(card, false)
+	finding := convertToFinding(card, false, nil)
 
 	if finding.Message != "ERROR: test failed" {
 		t.Errorf("Message = %q, expected %q", finding.Message, "ERROR: test failed")
@@ -62,7 +63,7 @@ func TestContextTruncation(t *testing.T) {
 	}
 
 	// Test context truncation (same limits for all tiers)
-	finding := convertToFinding(card, false)
+	finding := convertToFinding(card, false, nil)
 
 	if len(finding.Pre) != MCPPreContext {
 		t.Errorf("Pre len = %d, expected %d", len(finding.Pre), MCPPreContext)
@@ -115,7 +116,7 @@ func TestTierFindings(t *testing.T) {
 		},
 	}
 
-	result := TierFindings(cards, 10)
+	result := TierFindings(cards, 10, nil)
 
 	if len(result.Tier1UniqueFailures) != 1 {
 		t.Errorf("Tier1 count = %d, expected 1", len(result.Tier1UniqueFailures))
@@ -126,6 +127,39 @@ func TestTierFindings(t *testing.T) {
 	// Tier 3 findings that appear in passing jobs should have InPassing=true
 	if len(result.Tier3CommonNoise) > 0 && !result.Tier3CommonNoise[0].InPassing {
 		t.Errorf("InPassing = false, expected true for noise appearing in passing jobs")
+	}
+}
+
+func TestFindingNovelty(t *testing.T) {
+	card := contracts.TriageCard{
+		MessageHash:     "known-hash",
+		RawMessage:      "test error",
+		Severity:        "ERROR",
+		ConfidenceScore: 0.9,
+		JobName:         "test-job",
+		Metadata:        map[string]string{"job_state": "failed"},
+	}
+
+	// With nil novelty map, finding should be novel (no history available)
+	finding := convertToFinding(card, false, nil)
+	if !finding.Novel {
+		t.Error("Finding with nil novelty map should be marked as novel")
+	}
+
+	// With empty novelty map, finding should be novel (never seen)
+	emptyMap := make(map[string]store.FindingNoveltyInfo)
+	finding = convertToFinding(card, false, emptyMap)
+	if !finding.Novel {
+		t.Error("Finding not in map should be marked as novel")
+	}
+
+	// With hash in novelty map, finding should NOT be novel
+	seenMap := map[string]store.FindingNoveltyInfo{
+		"known-hash": {TotalOccurrences: 3, FailingOccurs: 2, PassingOccurs: 1},
+	}
+	finding = convertToFinding(card, false, seenMap)
+	if finding.Novel {
+		t.Error("Finding in novelty map should NOT be marked as novel")
 	}
 }
 

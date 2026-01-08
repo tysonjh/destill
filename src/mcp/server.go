@@ -30,7 +30,7 @@ type Server struct {
 func NewServer(st store.Store) *Server {
 	mcpSrv := server.NewMCPServer(
 		"destill",
-		"1.0.0",
+		"0.2.0",
 		server.WithToolCapabilities(true),
 	)
 
@@ -108,8 +108,11 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	// Record to SQLite history for novelty/flaky detection (best-effort)
 	s.recordBuildData(ctx, buildInfo, testResults, cards)
 
+	// Load novelty map for finding classification (best-effort)
+	noveltyMap := s.loadNoveltyMap(ctx, buildInfo)
+
 	// Tier findings on read
-	response := TierFindings(cards, limit)
+	response := TierFindings(cards, limit, noveltyMap)
 	response.Build = buildInfo
 
 	// Return lightweight manifest with test results
@@ -383,6 +386,45 @@ func (s *Server) recordBuildData(ctx context.Context, buildInfo BuildInfo, testR
 
 	// Record all build data (best-effort, don't fail if it errors)
 	_ = history.RecordBuildData(ctx, pipelineID, buildNumber, testResults, cards)
+}
+
+// loadNoveltyMap loads the novelty map for finding classification.
+// Returns nil on error (novelty detection is best-effort).
+func (s *Server) loadNoveltyMap(ctx context.Context, buildInfo BuildInfo) map[string]store.FindingNoveltyInfo {
+	if buildInfo.Number == "" {
+		return nil
+	}
+
+	// Parse build number
+	buildNumber, err := strconv.Atoi(buildInfo.Number)
+	if err != nil || buildNumber == 0 {
+		return nil
+	}
+
+	// Build pipeline ID from URL
+	ref, err := provider.ParseURL(buildInfo.URL)
+	if err != nil {
+		return nil
+	}
+	pipelineID := ref.Metadata["org"] + "/" + ref.Metadata["pipeline"]
+	if pipelineID == "/" {
+		return nil
+	}
+
+	// Open test history
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return nil
+	}
+	defer history.Close()
+
+	// Load novelty map (excludes current build)
+	noveltyMap, err := history.LoadFindingNoveltyMap(ctx, pipelineID, buildNumber)
+	if err != nil {
+		return nil
+	}
+
+	return noveltyMap
 }
 
 // buildTestSummary creates a TestSummary from collected test results.
