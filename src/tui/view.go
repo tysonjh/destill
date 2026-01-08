@@ -46,19 +46,15 @@ func (v *View) SetItems(items []Item) {
 	v.items = items
 
 	// Calculate max rank and recurrence for column widths
-	maxRank := 0
 	maxRecurrence := 0
 	for _, item := range items {
-		if rank := item.Rank; rank > maxRank {
-			maxRank = rank
-		}
 		if recur := item.GetRecurrence(); recur > maxRecurrence {
 			maxRecurrence = recur
 		}
 	}
 
 	// Update delegate column widths
-	v.delegate.SetColumnWidths(maxRank, maxRecurrence)
+	v.delegate.SetColumnWidths(maxRecurrence)
 
 	listItems := make([]list.Item, len(items))
 	for i, item := range items {

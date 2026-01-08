@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"fmt"
-
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -19,12 +17,14 @@ func (m MainModel) renderListPanel(width, height int) string {
 		Render(m.listView.Render())
 
 	// Add column headers
-	delegate := m.listView.GetDelegate()
-	rankHeader := fmt.Sprintf("%*s", delegate.RankWidth, "Rk")
-	recurHeader := fmt.Sprintf("%*s", delegate.RecurWidth, "Rc")
-
 	// Truncate to width-4 to account for padding (2 chars)
-	headerText := fmt.Sprintf("%s │ Conf │ %s │ Message", rankHeader, recurHeader)
+	// Only show "Novel" column if history exists
+	var headerText string
+	if len(m.noveltyMap) > 0 {
+		headerText = "Seen | Novel | Message"
+	} else {
+		headerText = "Seen | Message"
+	}
 	truncatedHeaderText := Truncate(headerText, width-4, true)
 	headerRow := lipgloss.NewStyle().
 		Foreground(m.styles.PrimaryBlue).

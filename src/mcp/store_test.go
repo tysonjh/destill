@@ -20,7 +20,7 @@ func TestToManifest(t *testing.T) {
 		},
 	}
 
-	manifest := ToManifest("req-123", response)
+	manifest := ToManifest("req-123", response, nil)
 
 	// Check request ID
 	if manifest.RequestID != "req-123" {
@@ -33,22 +33,22 @@ func TestToManifest(t *testing.T) {
 	}
 
 	// Check tier 1 findings are fully expanded (not truncated)
-	if len(manifest.Tier1Findings) != 2 {
-		t.Errorf("Tier1Findings count = %d, want 2", len(manifest.Tier1Findings))
+	if len(manifest.Findings) != 2 {
+		t.Errorf("Findings count = %d, want 2", len(manifest.Findings))
 	}
 	// Tier 1 messages should NOT be truncated (full Finding objects)
-	if manifest.Tier1Findings[0].Message != "Short error" {
-		t.Errorf("Tier1 short message = %q, want %q", manifest.Tier1Findings[0].Message, "Short error")
+	if manifest.Findings[0].Message != "Short error" {
+		t.Errorf("Tier1 short message = %q, want %q", manifest.Findings[0].Message, "Short error")
 	}
-	if len(manifest.Tier1Findings[1].Message) <= 100 {
-		t.Errorf("Tier1 long message should not be truncated: len = %d", len(manifest.Tier1Findings[1].Message))
+	if len(manifest.Findings[1].Message) <= 100 {
+		t.Errorf("Tier1 long message should not be truncated: len = %d", len(manifest.Findings[1].Message))
 	}
 
 	// Check tier 2-3 findings are summaries (truncated)
-	if len(manifest.OtherFindings) != 1 {
-		t.Errorf("OtherFindings count = %d, want 1", len(manifest.OtherFindings))
+	if len(manifest.Other) != 1 {
+		t.Errorf("Other count = %d, want 1", len(manifest.Other))
 	}
-	if manifest.OtherFindings[0].Tier != 3 {
-		t.Errorf("OtherFindings tier = %d, want 3", manifest.OtherFindings[0].Tier)
+	if manifest.Other[0].Tier != 3 {
+		t.Errorf("Other tier = %d, want 3", manifest.Other[0].Tier)
 	}
 }

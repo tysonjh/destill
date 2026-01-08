@@ -86,7 +86,8 @@ func (b *InMemoryBroker) Subscribe(ctx context.Context, topic string, groupID st
 	}
 
 	// Create a buffered channel for this subscriber
-	ch := make(chan Message, 100)
+	// Use large buffer to handle bursts of test results (test suites can have 1000+ tests)
+	ch := make(chan Message, 10000)
 	b.subscribers[topic] = append(b.subscribers[topic], ch)
 
 	if b.verbose {

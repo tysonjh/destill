@@ -18,6 +18,10 @@ func init() {
 type Provider struct {
 	client     *Client
 	jobLogURLs map[string]string // Maps job ID -> raw log URL
+	// Cached build context for artifact fetching
+	org       string
+	pipeline  string
+	buildNum  string
 }
 
 // NewProvider creates a Buildkite provider with API token
@@ -44,18 +48,29 @@ func (p *Provider) FetchBuild(ctx context.Context, ref *provider.BuildRef) (*pro
 	pipeline := ref.Metadata["pipeline"]
 	buildNum := ref.BuildID
 
+	// Cache for artifact fetching
+	p.org = org
+	p.pipeline = pipeline
+	p.buildNum = buildNum
+
 	bkBuild, err := p.client.GetBuild(ctx, org, pipeline, buildNum)
 	if err != nil {
 		return nil, err
 	}
 
 	build := &provider.Build{
-		ID:        bkBuild.ID,
-		Number:    fmt.Sprintf("%d", bkBuild.Number),
-		URL:       bkBuild.WebURL,
-		State:     bkBuild.State,
-		Timestamp: bkBuild.CreatedAt,
-		Jobs:      make([]provider.Job, 0, len(bkBuild.Jobs)),
+		ID:         bkBuild.ID,
+		Number:     fmt.Sprintf("%d", bkBuild.Number),
+		URL:        bkBuild.WebURL,
+		State:      bkBuild.State,
+		Branch:     bkBuild.Branch,
+		Commit:     bkBuild.Commit,
+		Message:    bkBuild.Message,
+		Source:     bkBuild.Source,
+		StartedAt:  bkBuild.StartedAt,
+		FinishedAt: bkBuild.FinishedAt,
+		Timestamp:  bkBuild.CreatedAt,
+		Jobs:       make([]provider.Job, 0, len(bkBuild.Jobs)),
 	}
 
 	for _, bkJob := range bkBuild.Jobs {
@@ -90,7 +105,11 @@ func (p *Provider) FetchJobLog(ctx context.Context, jobID string) (string, error
 
 // FetchArtifacts retrieves artifacts for a job
 func (p *Provider) FetchArtifacts(ctx context.Context, jobID string) ([]provider.Artifact, error) {
-	bkArtifacts, err := p.client.GetJobArtifacts(ctx, jobID)
+	if p.org == "" || p.pipeline == "" || p.buildNum == "" {
+		return nil, fmt.Errorf("build context not set (FetchBuild must be called first)")
+	}
+
+	bkArtifacts, err := p.client.GetJobArtifacts(ctx, p.org, p.pipeline, p.buildNum, jobID)
 	if err != nil {
 		return nil, err
 	}

@@ -320,6 +320,41 @@ INFO: Cleanup started`
 	}
 }
 
+func TestAnalyzeChunk_ShellEchoPenalized(t *testing.T) {
+	// Shell echo/printf commands should have lower confidence (penalized but not filtered)
+	// to preserve recall while burying false positives
+	tests := []struct {
+		name          string
+		content       string
+		maxConfidence float64
+	}{
+		{"echo double quote", `echo "retried 'dev:retry-create-buildx-builder' task 3 times and failed"`, 0.65},
+		{"echo single quote", `echo 'ERROR: something failed'`, 0.75},  // highConfidencePattern also matches
+		{"echo variable", `echo $ERROR_MESSAGE`, 0.55},
+		{"printf", `printf "FATAL: %s\n" "$error"`, 0.80},  // FATAL + highConfidencePattern
+		{"indented echo", `    echo "ERROR: build failed"`, 0.75},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chunk := contracts.LogChunk{
+				Content:   tt.content,
+				LineStart: 1,
+				Metadata:  map[string]string{"exit_status": "1"}, // Failed job
+			}
+
+			findings := AnalyzeChunk(chunk)
+			if len(findings) == 0 {
+				// May be filtered by < 0.5 threshold, which is acceptable
+				return
+			}
+			if findings[0].ConfidenceScore > tt.maxConfidence {
+				t.Errorf("Expected confidence <= %.2f, got %.2f", tt.maxConfidence, findings[0].ConfidenceScore)
+			}
+		})
+	}
+}
+
 func TestAnalyzeChunk_LargeChunk(t *testing.T) {
 	// Create a large chunk with multiple errors
 	var lines []string

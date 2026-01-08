@@ -1,9 +1,13 @@
 package tui
 
-import "destill-agent/src/contracts"
+import (
+	"destill-agent/src/contracts"
+)
 
 // Item represents an item that can be displayed in the triage list.
 // It wraps the domain TriageCard and implements bubbles/list.Item.
+// Note: Novelty info is stored separately in the model's noveltyMap
+// and looked up by MessageHash at render time.
 type Item struct {
 	Card contracts.TriageCard
 	Rank int

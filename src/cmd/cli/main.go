@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -14,8 +15,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"destill-agent/src/broker"
+	"destill-agent/src/buildkite"
 	"destill-agent/src/contracts"
 	"destill-agent/src/mcp"
+	analysispipeline "destill-agent/src/pipeline"
 	"destill-agent/src/provider"
 	"destill-agent/src/store"
 	"destill-agent/src/tui"
@@ -155,6 +158,11 @@ Examples:
   destill analyze https://buildkite.com/org/pipeline/builds/4091 --cache build.json`,
 	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
+		// Debug check at very start
+		if os.Getenv("DESTILL_DEBUG_ARTIFACTS") != "" {
+			fmt.Println("[DEBUG] DESTILL_DEBUG_ARTIFACTS is set")
+		}
+
 		buildURL := args[0]
 		jsonOutput, _ := cmd.Flags().GetBool("json")
 		cacheFile, _ := cmd.Flags().GetString("cache")
@@ -173,14 +181,13 @@ Examples:
 		}
 		defer mode.Close()
 
-		// 2. Submit: Publish analysis request
-		if _, err := mode.SubmitAnalysis(buildURL); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to submit analysis: %v\n", err)
-			os.Exit(1)
-		}
-
 		// 3. Display: Show results in requested format
 		if jsonOutput {
+			// 2. Submit: Publish analysis request
+			if _, err := mode.SubmitAnalysis(buildURL); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to submit analysis: %v\n", err)
+				os.Exit(1)
+			}
 			// JSON output: collect and display findings
 			if err := displayJSON(mode.Broker()); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -198,7 +205,24 @@ Examples:
 				fmt.Printf("📂 Loaded %d cards from cache: %s\n", len(initialCards), cacheFile)
 			}
 
-			if err := displayTUI(mode.Broker(), initialCards); err != nil {
+			// For TUI: Subscribe BEFORE submitting to avoid race conditions
+			// where warnings are published before the TUI is listening
+			var channels *tui.BrokerChannels
+			if len(initialCards) == 0 {
+				channels, err = tui.SubscribeToBroker(mode.Broker())
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to subscribe to broker: %v\n", err)
+					os.Exit(1)
+				}
+			}
+
+			// 2. Submit: Publish analysis request (after subscribing)
+			if _, err := mode.SubmitAnalysis(buildURL); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to submit analysis: %v\n", err)
+				os.Exit(1)
+			}
+
+			if err := displayTUI(channels, initialCards); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -464,15 +488,189 @@ Environment variables:
 	},
 }
 
+// syncCmd represents the sync command for backfilling test history
+var syncCmd = &cobra.Command{
+	Use:   "sync [pipeline-url]",
+	Short: "Sync test history from recent builds",
+	Long: `Syncs test results from recent builds to populate the local SQLite database.
+
+This enables flaky test detection by building up historical test data.
+
+Accepts either a pipeline URL or a specific build URL:
+  - Pipeline: https://buildkite.com/org/pipeline/builds?branch=dev
+  - Build:    https://buildkite.com/org/pipeline/builds/123
+
+The branch query parameter filters to only sync builds from that branch.
+
+Options:
+  -n, --builds    Number of recent builds to sync (default: 20)
+
+Builds are skipped if:
+  - They are still running (not finished/failed/passed)
+  - They have already been processed (test results exist in SQLite)
+
+Examples:
+  destill sync https://buildkite.com/org/pipeline/builds?branch=dev
+  destill sync https://buildkite.com/org/pipeline/builds/123 -n 50
+
+Environment variables:
+  BUILDKITE_API_TOKEN - Required for Buildkite builds`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		pipelineURL := args[0]
+		numBuilds, _ := cmd.Flags().GetInt("builds")
+
+		// Try to parse as pipeline URL first (supports branch filter)
+		org, pipeline, branch, err := buildkite.ParsePipelineURL(pipelineURL)
+		if err != nil {
+			// Fall back to build URL format
+			org, pipeline, _, err = buildkite.ParseBuildURL(pipelineURL)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+		}
+
+		// Get API token
+		token := os.Getenv("BUILDKITE_API_TOKEN")
+		if token == "" {
+			fmt.Fprintln(os.Stderr, "ERROR: BUILDKITE_API_TOKEN environment variable is required")
+			os.Exit(1)
+		}
+
+		// Create Buildkite client
+		client := buildkite.NewClient(token)
+		ctx := context.Background()
+
+		// Initialize test history database
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get home directory: %v\n", err)
+			os.Exit(1)
+		}
+		dbPath := filepath.Join(homeDir, ".destill", "history.db")
+		history, err := store.NewTestHistory(dbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to open test history database: %v\n", err)
+			os.Exit(1)
+		}
+		defer history.Close()
+
+		// Get pipeline ID for checking processed builds
+		pipelineID := fmt.Sprintf("%s/%s", org, pipeline)
+
+		// Get already processed builds
+		processedBuilds, err := history.GetProcessedBuilds(ctx, pipelineID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to get processed builds: %v\n", err)
+			os.Exit(1)
+		}
+
+		if branch != "" {
+			fmt.Printf("Syncing test history for %s/%s (branch: %s)\n", org, pipeline, branch)
+		} else {
+			fmt.Printf("Syncing test history for %s/%s (all branches)\n", org, pipeline)
+		}
+		fmt.Printf("Fetching last %d builds...\n", numBuilds)
+
+		// List recent builds with optional branch filter
+		var listOpts *buildkite.ListBuildsOptions
+		if branch != "" {
+			listOpts = &buildkite.ListBuildsOptions{Branch: branch}
+		}
+		builds, err := client.ListBuilds(ctx, org, pipeline, numBuilds, listOpts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to list builds: %v\n", err)
+			os.Exit(1)
+		}
+
+		fmt.Printf("Found %d builds\n", len(builds))
+
+		// Filter and process builds with rate limiting
+		var skippedRunning, skippedProcessed, processed, noArtifacts int
+		for i, build := range builds {
+			// Skip running builds
+			if build.State == "running" || build.State == "scheduled" || build.State == "blocked" || build.State == "canceling" {
+				skippedRunning++
+				continue
+			}
+
+			// Skip already processed builds
+			if processedBuilds[build.Number] {
+				skippedProcessed++
+				continue
+			}
+
+			// Rate limiting: wait between builds to avoid 429 errors
+			if i > 0 {
+				time.Sleep(500 * time.Millisecond)
+			}
+
+			// Process this build with retry on rate limit
+			fmt.Printf("  Processing build #%d (%s)...", build.Number, build.State)
+
+			// Run full analysis pipeline (logs + artifacts) with retry on rate limit
+			var analysisResult *analysispipeline.AnalysisResult
+			maxRetries := 3
+
+			for attempt := 0; attempt < maxRetries; attempt++ {
+				analysisResult, err = analysispipeline.AnalyzeBuild(ctx, build.WebURL)
+				if err != nil {
+					if strings.Contains(err.Error(), "429") {
+						waitTime := time.Duration(attempt+1) * 2 * time.Second
+						fmt.Printf(" rate limited, waiting %v...", waitTime)
+						time.Sleep(waitTime)
+						continue
+					}
+					break
+				}
+				break // Success
+			}
+
+			if err != nil {
+				fmt.Printf(" error: %v\n", err)
+				continue
+			}
+
+			// Store findings to history (test results are stored by artifact agent)
+			pipelineID := org + "/" + pipeline
+			if len(analysisResult.Cards) > 0 {
+				_ = history.RecordFindingsFromCards(ctx, pipelineID, build.Number, analysisResult.Cards)
+			}
+
+			// Report results
+			testCount := len(analysisResult.TestResults)
+			findingCount := len(analysisResult.Cards)
+			if testCount == 0 && findingCount == 0 {
+				fmt.Printf(" no data\n")
+				noArtifacts++
+			} else {
+				fmt.Printf(" %d tests, %d findings\n", testCount, findingCount)
+				processed++
+			}
+		}
+
+		fmt.Printf("\nSync complete:\n")
+		fmt.Printf("  Processed: %d builds (%d with data)\n", processed+noArtifacts, processed)
+		fmt.Printf("  Skipped (running): %d\n", skippedRunning)
+		fmt.Printf("  Skipped (already processed): %d\n", skippedProcessed)
+		fmt.Printf("\nHistory stored in: %s\n", dbPath)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
 	rootCmd.AddCommand(submitCmd)
 	rootCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(mcpServerCmd)
+	rootCmd.AddCommand(syncCmd)
 
 	// Add flags to analyze command
 	analyzeCmd.Flags().BoolP("json", "j", false, "Output findings as JSON instead of launching TUI")
 	analyzeCmd.Flags().StringP("cache", "c", "", "Cache file path to load triage cards (speeds up iteration)")
+
+	// Add flags to sync command
+	syncCmd.Flags().IntP("builds", "n", 20, "Number of recent builds to sync")
 }
 
 func main() {

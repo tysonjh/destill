@@ -86,3 +86,75 @@ func TestNewClient(t *testing.T) {
 		t.Error("NewClient() httpClient is nil")
 	}
 }
+
+func TestParsePipelineURL(t *testing.T) {
+	tests := []struct {
+		name         string
+		url          string
+		wantOrg      string
+		wantPipeline string
+		wantBranch   string
+		wantErr      bool
+	}{
+		{
+			name:         "pipeline URL with branch",
+			url:          "https://buildkite.com/redpanda/redpanda/builds?branch=dev",
+			wantOrg:      "redpanda",
+			wantPipeline: "redpanda",
+			wantBranch:   "dev",
+			wantErr:      false,
+		},
+		{
+			name:         "pipeline URL without branch",
+			url:          "https://buildkite.com/my-org/my-pipeline/builds",
+			wantOrg:      "my-org",
+			wantPipeline: "my-pipeline",
+			wantBranch:   "",
+			wantErr:      false,
+		},
+		{
+			name:         "pipeline URL without /builds",
+			url:          "https://buildkite.com/my-org/my-pipeline",
+			wantOrg:      "my-org",
+			wantPipeline: "my-pipeline",
+			wantBranch:   "",
+			wantErr:      false,
+		},
+		{
+			name:         "pipeline URL with multiple query params",
+			url:          "https://buildkite.com/org/pipe/builds?branch=main&page=2",
+			wantOrg:      "org",
+			wantPipeline: "pipe",
+			wantBranch:   "main",
+			wantErr:      false,
+		},
+		{
+			name:    "invalid URL - wrong domain",
+			url:     "https://example.com/org/pipeline/builds",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			org, pipeline, branch, err := ParsePipelineURL(tt.url)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ParsePipelineURL() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if org != tt.wantOrg {
+					t.Errorf("ParsePipelineURL() org = %v, want %v", org, tt.wantOrg)
+				}
+				if pipeline != tt.wantPipeline {
+					t.Errorf("ParsePipelineURL() pipeline = %v, want %v", pipeline, tt.wantPipeline)
+				}
+				if branch != tt.wantBranch {
+					t.Errorf("ParsePipelineURL() branch = %v, want %v", branch, tt.wantBranch)
+				}
+			}
+		})
+	}
+}

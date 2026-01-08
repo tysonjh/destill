@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"destill-agent/src/store"
 )
 
 const (
@@ -18,33 +20,35 @@ const (
 )
 
 // Delegate renders triage items as table rows.
+// NoveltyMap is looked up at render time to determine if a finding is novel.
 type Delegate struct {
-	RankWidth  int
-	RecurWidth int
-	styles     *StyleConfig
+	SeenWidth   int
+	styles      *StyleConfig
+	NoveltyMap  *map[string]store.FindingNoveltyInfo // Pointer to model's novelty map
+	HasHistory  bool                                  // True if novelty history exists (hide column if false)
 }
 
 // NewDelegate creates a new triage table delegate with default styles
 func NewDelegate() Delegate {
 	return Delegate{
-		RankWidth:  2, // default minimum
-		RecurWidth: 2, // default minimum
-		styles:     DefaultStyles(),
+		SeenWidth: 4, // default minimum for "Seen" column
+		styles:    DefaultStyles(),
 	}
 }
 
-// SetColumnWidths sets the widths for rank and recurrence columns
-func (d *Delegate) SetColumnWidths(maxRank, maxRecurrence int) {
-	// Calculate width needed for rank (number of digits)
-	d.RankWidth = len(fmt.Sprintf("%d", maxRank))
-	if d.RankWidth < 2 {
-		d.RankWidth = 2
-	}
+// SetNoveltyMap sets the novelty map reference for render-time lookups.
+// HasHistory is set to true only if the map contains entries (history exists).
+func (d *Delegate) SetNoveltyMap(m *map[string]store.FindingNoveltyInfo) {
+	d.NoveltyMap = m
+	d.HasHistory = m != nil && len(*m) > 0
+}
 
+// SetColumnWidths sets the widths for the seen (recurrence) column
+func (d *Delegate) SetColumnWidths(maxRecurrence int) {
 	// Calculate width needed for recurrence (number of digits)
-	d.RecurWidth = len(fmt.Sprintf("%d", maxRecurrence))
-	if d.RecurWidth < 2 {
-		d.RecurWidth = 2
+	d.SeenWidth = len(fmt.Sprintf("%d", maxRecurrence))
+	if d.SeenWidth < 4 {
+		d.SeenWidth = 4 // minimum width to align with "Seen" header
 	}
 }
 
@@ -109,23 +113,32 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 
 	isSelected := index == m.Index()
 
-	rankFmt := fmt.Sprintf("%%%dd", d.RankWidth)   // e.g., "%3d" for 3-digit width
-	recurFmt := fmt.Sprintf("%%%dd", d.RecurWidth) // e.g., "%4d" for 4-digit width
+	// Format "Seen" column (recurrence count)
+	seenFmt := fmt.Sprintf("%%%dd", d.SeenWidth)
+	seenCol := fmt.Sprintf(seenFmt, entry.GetRecurrence())
 
-	rankNum := fmt.Sprintf(rankFmt, entry.Rank)              // dynamic width, right aligned
-	recurCol := fmt.Sprintf(recurFmt, entry.GetRecurrence()) // dynamic width, right aligned
-
-	// Format confidence score: show ".95" for < 1.0, "1.0" for 1.0
-	var confCol string
-	if entry.Card.ConfidenceScore >= 1.0 {
-		confCol = "1.0"
-	} else {
-		confCol = fmt.Sprintf("%.2f", entry.Card.ConfidenceScore)[1:] // ".95" format
+	// Format "Novel" column - only shown if history exists
+	var novelCol string
+	if d.HasHistory {
+		isNovel := true
+		if d.NoveltyMap != nil {
+			if _, found := (*d.NoveltyMap)[entry.Card.MessageHash]; found {
+				isNovel = false // Found in history = not novel
+			}
+		}
+		if isNovel {
+			novelCol = "★"
+		} else {
+			novelCol = " "
+		}
 	}
 
 	// Calculate available width for snippet
-	// Fixed columns: rank + conf (3) + recurrence + separators (9)
-	fixedWidth := d.RankWidth + 3 + d.RecurWidth + 9
+	// Fixed columns: seen + separators, plus novel column if showing
+	fixedWidth := d.SeenWidth + 5 // " │ " separator
+	if d.HasHistory {
+		fixedWidth += 1 + 5 // novel (1 char) + " │ " separator
+	}
 	availableWidth := m.Width() - fixedWidth - listRenderingOverhead
 
 	var snippet string
@@ -135,20 +148,6 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 		snippet = TruncateAndPad(snippetText, availableWidth, true)
 	}
 
-	// Style rank number by tier (1=unique failures, 3=noise)
-	var rankStyle lipgloss.Style
-	switch entry.Tier {
-	case 1: // Unique failures
-		rankStyle = lipgloss.NewStyle().Foreground(d.styles.Tier1Color).Bold(true)
-	case 3: // Noise
-		rankStyle = lipgloss.NewStyle().Foreground(d.styles.Tier3Color).Faint(true)
-	default:
-		rankStyle = lipgloss.NewStyle().Foreground(d.styles.TextSecondary)
-	}
-
-	rankCol := rankStyle.Render(rankNum)
-
-	// Build row: rank (colored) │ conf │ recur │ snippet
 	// Tier 3 (noise) and low confidence cards (< 0.80) are dimmed
 	isLowConfidence := entry.Card.ConfidenceScore < 0.80
 	isNoise := entry.Tier == 3
@@ -162,15 +161,24 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 		rowStyle = lipgloss.NewStyle().Foreground(d.styles.TextSecondary)
 	}
 
-	// Build row with styled rank and rest of content
-	restOfLine := fmt.Sprintf(" │ %s │ %s │ %s", confCol, recurCol, snippet)
+	// Style the novel indicator
+	novelStyle := lipgloss.NewStyle().Foreground(d.styles.NovelColor).Bold(true)
 
-	if isSelected {
-		// When selected, apply uniform style to entire row
-		line := fmt.Sprintf("%s │ %s │ %s │ %s", rankNum, confCol, recurCol, snippet)
-		fmt.Fprint(w, rowStyle.Render(line))
+	// Build row: with or without novel column based on history availability
+	if d.HasHistory {
+		// Full row: seen │ novel │ message
+		if isSelected {
+			line := fmt.Sprintf("%s │ %s │ %s", seenCol, novelCol, snippet)
+			fmt.Fprint(w, rowStyle.Render(line))
+		} else {
+			seenPart := rowStyle.Render(seenCol + " │ ")
+			novelPart := novelStyle.Render(novelCol)
+			msgPart := rowStyle.Render(" │ " + snippet)
+			fmt.Fprint(w, seenPart+novelPart+msgPart)
+		}
 	} else {
-		// When not selected, keep rank colored by tier
-		fmt.Fprint(w, rankCol+rowStyle.Render(restOfLine))
+		// No history: seen │ message (skip novel column)
+		line := fmt.Sprintf("%s │ %s", seenCol, snippet)
+		fmt.Fprint(w, rowStyle.Render(line))
 	}
 }

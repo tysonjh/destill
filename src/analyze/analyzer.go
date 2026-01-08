@@ -103,6 +103,10 @@ var (
 
 	// Documentation/help text
 	helpTextPattern = regexp.MustCompile(`(?i)(usage:|--help|example:|see also:|documentation)`)
+
+	// Shell script source code (echo/printf commands being printed, not actual output)
+	// Matches lines like: echo "error message" or printf "failed..."
+	shellEchoPattern = regexp.MustCompile(`(?i)^\s*(echo|printf)\s+["'$]`)
 )
 
 // Finding represents an error found in a log chunk.
@@ -322,6 +326,12 @@ func calculateConfidence(line string, severity string) float64 {
 	// Help/documentation text
 	if helpTextPattern.MatchString(line) {
 		score -= 0.25
+	}
+
+	// Shell script source code (echo/printf commands being printed, not actual output)
+	// Heavy penalty to bury these but still preserve recall
+	if shellEchoPattern.MatchString(line) {
+		score -= 0.60
 	}
 
 	// Test passed messages

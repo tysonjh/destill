@@ -150,11 +150,3 @@ func Wrap(text string, width int) string {
 
 	return result.String()
 }
-
-// SplitLines splits text by newlines, returning empty slice if text is empty
-func SplitLines(text string) []string {
-	if text == "" {
-		return []string{}
-	}
-	return strings.Split(text, "\n")
-}

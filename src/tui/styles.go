@@ -24,6 +24,9 @@ type StyleConfig struct {
 	Tier1Color lipgloss.Color // Unique failures - red
 	Tier3Color lipgloss.Color // Common noise - dim
 
+	// Novelty indicator color
+	NovelColor lipgloss.Color // Novel findings - gold/yellow star
+
 	// Accent colors for different job types
 	JobColors []lipgloss.Color
 }
@@ -45,6 +48,7 @@ func DefaultStyles() *StyleConfig {
 		ErrorBackground: lipgloss.Color("#2D0000"),
 		Tier1Color:      lipgloss.Color("#FF6B6B"), // Soft red - unique failures
 		Tier3Color:      lipgloss.Color("#6B6B6B"), // Dim gray - noise
+		NovelColor:      lipgloss.Color("#FFD700"), // Gold - novel findings
 		JobColors: []lipgloss.Color{
 			lipgloss.Color("#34A853"), // Green
 			lipgloss.Color("#FBBC04"), // Yellow

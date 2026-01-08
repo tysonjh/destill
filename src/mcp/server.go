@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -29,7 +30,7 @@ type Server struct {
 func NewServer(st store.Store) *Server {
 	mcpSrv := server.NewMCPServer(
 		"destill",
-		"1.0.0",
+		"0.2.0",
 		server.WithToolCapabilities(true),
 	)
 
@@ -88,7 +89,7 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	limit := request.GetInt("limit", 15)
 
 	// Run analysis
-	cards, buildInfo, err := s.runAnalysis(ctx, url)
+	cards, testResults, buildInfo, testSummary, err := s.runAnalysis(ctx, url)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("analysis failed: %v", err)), nil
 	}
@@ -104,12 +105,18 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 		return mcp.NewToolResultError(fmt.Sprintf("failed to store findings: %v", err)), nil
 	}
 
+	// Record to SQLite history for novelty/flaky detection (best-effort)
+	s.recordBuildData(ctx, buildInfo, testResults, cards)
+
+	// Load novelty map for finding classification (best-effort)
+	noveltyMap := s.loadNoveltyMap(ctx, buildInfo)
+
 	// Tier findings on read
-	response := TierFindings(cards, limit)
+	response := TierFindings(cards, limit, noveltyMap)
 	response.Build = buildInfo
 
-	// Return lightweight manifest
-	manifest := ToManifest(requestID, response)
+	// Return lightweight manifest with test results
+	manifest := ToManifest(requestID, response, testSummary)
 	jsonBytes, err := json.Marshal(manifest)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal response: %v", err)), nil
@@ -154,14 +161,15 @@ func (s *Server) handleGetFindingDetails(ctx context.Context, request mcp.CallTo
 }
 
 // runAnalysis runs the full analysis pipeline and collects cards.
-func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, BuildInfo, error) {
+// Returns cards, test results, build info, and test summary.
+func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, []contracts.TestResult, BuildInfo, *contracts.TestSummary, error) {
 	// Validate URL and token upfront to fail fast
 	ref, err := provider.ParseURL(buildURL)
 	if err != nil {
-		return nil, BuildInfo{}, provider.WrapError(err)
+		return nil, nil, BuildInfo{}, nil, provider.WrapError(err)
 	}
 	if err := provider.ValidateToken(ref); err != nil {
-		return nil, BuildInfo{}, provider.WrapError(err)
+		return nil, nil, BuildInfo{}, nil, provider.WrapError(err)
 	}
 
 	// Create in-memory broker and start pipeline
@@ -171,8 +179,22 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	pipelineCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// Subscribe to topics BEFORE starting pipeline to avoid race conditions
+	findingsCh, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "mcp-server-findings")
+	if err != nil {
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to findings: %w", err)
+	}
+	testsCh, err := msgBroker.Subscribe(ctx, contracts.TopicTestResults, "mcp-server-tests")
+	if err != nil {
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
+	}
+	metadataCh, err := msgBroker.Subscribe(ctx, contracts.TopicBuildMetadata, "mcp-server-metadata")
+	if err != nil {
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
+	}
+
 	if err := pipeline.Start(msgBroker, pipelineCtx); err != nil {
-		return nil, BuildInfo{}, fmt.Errorf("failed to start pipeline: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to start pipeline: %w", err)
 	}
 
 	// Submit analysis request
@@ -184,56 +206,73 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	}
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, BuildInfo{}, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
 
-	// Collect findings with timeout
-	cards, err := s.collectFindings(ctx, msgBroker)
+	// Collect findings, test results, and build metadata with timeout
+	cards, testResults, buildMeta, err := s.collectFromChannels(ctx, findingsCh, testsCh, metadataCh)
 	if err != nil {
-		return nil, BuildInfo{}, err
+		return nil, nil, BuildInfo{}, nil, err
 	}
 
-	// Build info
-	buildInfo := extractBuildInfo(cards, buildURL)
+	// Build info from authoritative metadata (fallback to card-based extraction)
+	buildInfo := buildInfoFromMetadata(buildMeta, cards, testResults, buildURL)
 
-	return cards, buildInfo, nil
+	// Build test summary if we have test results
+	var testSummary *contracts.TestSummary
+	if len(testResults) > 0 {
+		testSummary = buildTestSummary(requestID, testResults)
+	}
+
+	return cards, testResults, buildInfo, testSummary, nil
 }
 
-// collectFindings subscribes to findings and collects them until timeout.
-func (s *Server) collectFindings(ctx context.Context, msgBroker broker.Broker) ([]contracts.TriageCard, error) {
-	ch, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "mcp-server")
-	if err != nil {
-		return nil, fmt.Errorf("failed to subscribe: %w", err)
-	}
-
+// collectFromChannels collects findings, test results, and build metadata from pre-subscribed channels until timeout.
+func (s *Server) collectFromChannels(ctx context.Context, findingsCh, testsCh, metadataCh <-chan broker.Message) ([]contracts.TriageCard, []contracts.TestResult, *contracts.BuildMetadata, error) {
 	var cards []contracts.TriageCard
+	var testResults []contracts.TestResult
+	var buildMeta *contracts.BuildMetadata
 	timeout := time.After(120 * time.Second)
 	lastActivity := time.Now()
 
 	for {
 		select {
-		case msg := <-ch:
+		case msg := <-findingsCh:
 			var card contracts.TriageCard
 			if err := json.Unmarshal(msg.Value, &card); err == nil {
 				cards = append(cards, card)
 				lastActivity = time.Now()
 			}
+		case msg := <-testsCh:
+			var result contracts.TestResult
+			if err := json.Unmarshal(msg.Value, &result); err == nil {
+				testResults = append(testResults, result)
+				lastActivity = time.Now()
+			}
+		case msg := <-metadataCh:
+			var meta contracts.BuildMetadata
+			if err := json.Unmarshal(msg.Value, &meta); err == nil {
+				buildMeta = &meta
+				lastActivity = time.Now()
+			}
 		case <-timeout:
-			return cards, nil
+			return cards, testResults, buildMeta, nil
 		case <-ctx.Done():
-			return cards, ctx.Err()
+			return cards, testResults, buildMeta, ctx.Err()
 		default:
 			if time.Since(lastActivity) > 10*time.Second && len(cards) > 0 {
-				return cards, nil
+				return cards, testResults, buildMeta, nil
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
 }
 
-// extractBuildInfo extracts build metadata from cards.
-func extractBuildInfo(cards []contracts.TriageCard, url string) BuildInfo {
+// buildInfoFromMetadata creates BuildInfo from authoritative metadata.
+// Returns "unknown" status if metadata is not available.
+func buildInfoFromMetadata(meta *contracts.BuildMetadata, cards []contracts.TriageCard, testResults []contracts.TestResult, url string) BuildInfo {
+	// Extract job counts from cards (metadata doesn't have per-job info)
 	failedJobs := make(map[string]bool)
 	passedJobs := make(map[string]bool)
 	otherJobs := make(map[string]bool)
@@ -247,28 +286,60 @@ func extractBuildInfo(cards []contracts.TriageCard, url string) BuildInfo {
 		case "":
 			// Skip cards without job_state metadata
 		default:
-			// Track canceled, skipped, in_progress, etc.
 			otherJobs[card.JobName] = true
 		}
 	}
 
-	var failed []string
-	for job := range failedJobs {
-		failed = append(failed, job)
+	// Track which jobs have test results
+	jobsWithTests := make(map[string]bool)
+	for _, tr := range testResults {
+		if tr.JobName != "" {
+			jobsWithTests[tr.JobName] = true
+		}
 	}
 
-	status := "passed"
-	if len(failed) > 0 {
-		status = "failed"
+	// Classify failed jobs by whether they have tests
+	var failed, failedWithTests, failedNoTests []string
+	for job := range failedJobs {
+		failed = append(failed, job)
+		if jobsWithTests[job] {
+			failedWithTests = append(failedWithTests, job)
+		} else {
+			failedNoTests = append(failedNoTests, job)
+		}
+	}
+
+	// Return unknown status if no authoritative metadata
+	if meta == nil {
+		return BuildInfo{
+			URL:             url,
+			Status:          "unknown",
+			FailedJobs:      failed,
+			FailedWithTests: failedWithTests,
+			FailedNoTests:   failedNoTests,
+			PassedCount:     len(passedJobs),
+			OtherCount:      len(otherJobs),
+			Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		}
 	}
 
 	return BuildInfo{
-		URL:             url,
-		Status:          status,
+		URL:             meta.URL,
+		Number:          meta.Number,
+		Status:          meta.State,
+		Branch:          meta.Branch,
+		Commit:          meta.Commit,
+		Message:         meta.Message,
+		Source:          meta.Source,
+		StartedAt:       meta.StartedAt,
+		FinishedAt:      meta.FinishedAt,
+		Duration:        meta.Duration,
 		FailedJobs:      failed,
-		PassedJobsCount: len(passedJobs),
-		OtherJobsCount:  len(otherJobs),
-		Timestamp:       time.Now().UTC().Format(time.RFC3339),
+		FailedWithTests: failedWithTests,
+		FailedNoTests:   failedNoTests,
+		PassedCount:     len(passedJobs),
+		OtherCount:      len(otherJobs),
+		Timestamp:       meta.Timestamp,
 	}
 }
 
@@ -278,4 +349,152 @@ func generateRequestID() string {
 	randomBytes := make([]byte, 4)
 	rand.Read(randomBytes)
 	return fmt.Sprintf("req-%s-%s", timestamp, hex.EncodeToString(randomBytes))
+}
+
+// recordBuildData records test results and findings to SQLite for flaky/novelty detection.
+// This is best-effort; errors don't fail the request.
+func (s *Server) recordBuildData(ctx context.Context, buildInfo BuildInfo, testResults []contracts.TestResult, cards []contracts.TriageCard) {
+	if len(cards) == 0 && len(testResults) == 0 {
+		return
+	}
+	if buildInfo.Number == "" {
+		return
+	}
+
+	// Parse build number
+	buildNumber, err := strconv.Atoi(buildInfo.Number)
+	if err != nil || buildNumber == 0 {
+		return
+	}
+
+	// Build pipeline ID from URL (e.g., "org/pipeline")
+	ref, err := provider.ParseURL(buildInfo.URL)
+	if err != nil {
+		return
+	}
+	pipelineID := ref.Metadata["org"] + "/" + ref.Metadata["pipeline"]
+	if pipelineID == "/" {
+		return
+	}
+
+	// Open test history (same pattern as buildTestSummary)
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return
+	}
+	defer history.Close()
+
+	// Record all build data (best-effort, don't fail if it errors)
+	_ = history.RecordBuildData(ctx, pipelineID, buildNumber, testResults, cards)
+}
+
+// loadNoveltyMap loads the novelty map for finding classification.
+// Returns nil on error (novelty detection is best-effort).
+func (s *Server) loadNoveltyMap(ctx context.Context, buildInfo BuildInfo) map[string]store.FindingNoveltyInfo {
+	if buildInfo.Number == "" {
+		return nil
+	}
+
+	// Parse build number
+	buildNumber, err := strconv.Atoi(buildInfo.Number)
+	if err != nil || buildNumber == 0 {
+		return nil
+	}
+
+	// Build pipeline ID from URL
+	ref, err := provider.ParseURL(buildInfo.URL)
+	if err != nil {
+		return nil
+	}
+	pipelineID := ref.Metadata["org"] + "/" + ref.Metadata["pipeline"]
+	if pipelineID == "/" {
+		return nil
+	}
+
+	// Open test history
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return nil
+	}
+	defer history.Close()
+
+	// Load novelty map (excludes current build)
+	noveltyMap, err := history.LoadFindingNoveltyMap(ctx, pipelineID, buildNumber)
+	if err != nil {
+		return nil
+	}
+
+	return noveltyMap
+}
+
+// buildTestSummary creates a TestSummary from collected test results.
+// Uses test history to classify failures as novel vs flaky.
+func buildTestSummary(requestID string, results []contracts.TestResult) *contracts.TestSummary {
+	if len(results) == 0 {
+		return nil
+	}
+
+	summary := &contracts.TestSummary{
+		RequestID: requestID,
+	}
+
+	// Extract pipeline info from first result
+	if len(results) > 0 {
+		summary.PipelineID = results[0].PipelineID
+		summary.BuildNumber = results[0].BuildNumber
+	}
+
+	// Open test history for flaky detection
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		// If we can't open history, fall back to marking all as novel
+		history = nil
+	}
+	if history != nil {
+		defer history.Close()
+	}
+
+	ctx := context.Background()
+
+	// Count pass/fail and classify failures
+	for _, r := range results {
+		summary.TotalTests++
+		if r.Passed {
+			summary.PassedCount++
+		} else {
+			summary.FailedCount++
+
+			failure := contracts.TestFailure{
+				TestName:       r.TestName,
+				FailureMessage: r.FailureMessage,
+			}
+
+			// Check test history for flakiness and last failure info
+			isFlaky := false
+			if history != nil {
+				flakeInfo, err := history.GetTestFlakeInfo(ctx, summary.PipelineID, r.TestName, summary.BuildNumber)
+				if err == nil {
+					// Always capture last failure date if available
+					if !flakeInfo.LastFailedAt.IsZero() {
+						failure.LastFailedAt = flakeInfo.LastFailedAt.Format(time.RFC3339)
+					}
+					// Mark as flaky if it meets the criteria
+					if flakeInfo.IsFlaky {
+						isFlaky = true
+						failure.IsFlaky = true
+						failure.HistoryRuns = flakeInfo.TotalRuns
+						failure.HistoryFails = flakeInfo.FailedRuns
+					}
+				}
+			}
+
+			if isFlaky {
+				summary.FlakyFailures = append(summary.FlakyFailures, failure)
+			} else {
+				summary.NovelFailures = append(summary.NovelFailures, failure)
+			}
+		}
+	}
+
+	return summary
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -11,6 +13,7 @@ import (
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
 	"destill-agent/src/ranking"
+	"destill-agent/src/store"
 )
 
 // LoadStatus represents the current loading state of the TUI
@@ -48,14 +51,88 @@ type initialState struct {
 	failedJobs     []JobInfo
 	passedJobs     []JobInfo
 	allJobs        []JobInfo
+	noveltyMap     map[string]store.FindingNoveltyInfo
 }
 
-// brokerChannels holds the channels and context for broker subscriptions
-type brokerChannels struct {
-	cardChan     <-chan broker.Message
-	progressChan <-chan broker.Message
-	ctx          context.Context
-	cancel       context.CancelFunc
+// BrokerChannels holds the channels and context for broker subscriptions.
+// Exported so callers can pre-subscribe before analysis starts.
+type BrokerChannels struct {
+	CardChan          <-chan broker.Message
+	ProgressChan      <-chan broker.Message
+	TestResultsChan   <-chan broker.Message
+	BuildMetadataChan <-chan broker.Message
+	Ctx               context.Context
+	Cancel            context.CancelFunc
+}
+
+// testResultMsg is sent when a test result arrives from the broker
+type testResultMsg struct {
+	result contracts.TestResult
+}
+
+// buildMetadataMsg is sent when build metadata arrives from the broker
+type buildMetadataMsg struct {
+	metadata contracts.BuildMetadata
+}
+
+// loadNoveltyMap attempts to load novelty info from the history database.
+// Returns an empty map if history is unavailable (silently ignores errors).
+func loadNoveltyMap(cards []contracts.TriageCard) map[string]store.FindingNoveltyInfo {
+	if len(cards) == 0 {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+
+	// Try to open history store with default path
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+	defer history.Close()
+
+	// Extract pipeline ID and build number from first card
+	pipelineID := extractPipelineID(cards[0].BuildURL)
+	buildNumber := extractBuildNumberInt(cards[0].BuildURL)
+	if pipelineID == "" {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+
+	// Load novelty map
+	ctx := context.Background()
+	noveltyMap, err := history.LoadFindingNoveltyMap(ctx, pipelineID, buildNumber)
+	if err != nil {
+		return make(map[string]store.FindingNoveltyInfo)
+	}
+
+	return noveltyMap
+}
+
+// extractPipelineID extracts the pipeline identifier from a build URL.
+// For Buildkite: "org/pipeline", for GitHub: "owner/repo"
+func extractPipelineID(buildURL string) string {
+	// Buildkite: https://buildkite.com/org/pipeline/builds/123
+	bkRegex := regexp.MustCompile(`buildkite\.com/([^/]+/[^/]+)/builds/`)
+	if matches := bkRegex.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// GitHub: https://github.com/owner/repo/actions/runs/123
+	ghRegex := regexp.MustCompile(`github\.com/([^/]+/[^/]+)/actions/runs/`)
+	if matches := ghRegex.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	return ""
+}
+
+// extractBuildNumberInt extracts the build number as an integer from a build URL.
+func extractBuildNumberInt(buildURL string) int {
+	buildNum := extractBuildNumber(buildURL)
+	if buildNum == "" {
+		return 0
+	}
+	var num int
+	fmt.Sscanf(buildNum, "%d", &num)
+	return num
 }
 
 // buildInitialState processes the initial cards and builds the state needed for the TUI.
@@ -63,6 +140,9 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 	hashMap := make(map[string]*Item)
 	jobsDiscovered := make(map[string]bool)
 	jobsFailed := make(map[string]bool)
+
+	// Try to load novelty data from history (silently ignore errors)
+	noveltyMap := loadNoveltyMap(cards)
 
 	for _, card := range cards {
 		if existing, ok := hashMap[card.MessageHash]; ok {
@@ -75,8 +155,8 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 		if !jobsDiscovered[card.JobName] {
 			jobsDiscovered[card.JobName] = true
 		}
-		// Track if this job failed (exit_status != "0")
-		if exitStatus, ok := card.Metadata["exit_status"]; ok && exitStatus != "0" {
+		// Track if this job failed
+		if card.Metadata["job_state"] == "failed" {
 			jobsFailed[card.JobName] = true
 		}
 	}
@@ -104,6 +184,7 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 		failedJobs:     failedJobs,
 		passedJobs:     passedJobs,
 		allJobs:        allJobs,
+		noveltyMap:     noveltyMap,
 	}
 }
 
@@ -123,11 +204,12 @@ func initializeListView(state *initialState) View {
 	return listView
 }
 
-// subscribeToBroker sets up subscriptions to the broker channels.
+// SubscribeToBroker sets up subscriptions to the broker channels.
+// Call this BEFORE submitting analysis to avoid race conditions with message delivery.
 // Returns nil channels if broker is nil.
-func subscribeToBroker(brk broker.Broker) (*brokerChannels, error) {
+func SubscribeToBroker(brk broker.Broker) (*BrokerChannels, error) {
 	if brk == nil {
-		return &brokerChannels{}, nil
+		return &BrokerChannels{}, nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -144,11 +226,25 @@ func subscribeToBroker(brk broker.Broker) (*brokerChannels, error) {
 		return nil, err
 	}
 
-	return &brokerChannels{
-		cardChan:     cardChan,
-		progressChan: progressChan,
-		ctx:          ctx,
-		cancel:       cancel,
+	testResultsChan, err := brk.Subscribe(ctx, contracts.TopicTestResults, "tui-test-results-consumer")
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	buildMetadataChan, err := brk.Subscribe(ctx, contracts.TopicBuildMetadata, "tui-build-metadata-consumer")
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	return &BrokerChannels{
+		CardChan:          cardChan,
+		ProgressChan:      progressChan,
+		TestResultsChan:   testResultsChan,
+		BuildMetadataChan: buildMetadataChan,
+		Ctx:               ctx,
+		Cancel:            cancel,
 	}, nil
 }
 
@@ -157,6 +253,15 @@ const (
 	TierFilterAll    = 0 // Show all tiers (default)
 	TierFilterUnique = 1 // Unique failures only
 	TierFilterNoise  = 2 // Noise only
+)
+
+// ViewMode represents the current view in the TUI
+type ViewMode int
+
+const (
+	ViewLogs    ViewMode = iota // Log findings view (default, existing TUI)
+	ViewSummary                 // Build summary overview
+	ViewTests                   // Test failures view
 )
 
 // MainModel is the main Bubble Tea model for the application.
@@ -174,18 +279,32 @@ type MainModel struct {
 	ready          bool
 	tierFilter     int // TierFilterAll (default), TierFilterUnique, or TierFilterNoise
 
+	// Multi-view support
+	viewMode     ViewMode
+	summaryModel SummaryModel
+	testsModel   TestsModel
+
 	// Streaming support
-	broker         broker.Broker         // Message broker
-	cardChan       <-chan broker.Message // Channel receiving cards from broker
-	progressChan   <-chan broker.Message // Channel receiving progress updates
-	pendingCards   []Item                // Cards waiting to be merged
-	hashMap        map[string]*Item      // For grouping by hash
-	status         LoadStatus            // Current loading status
-	cardCount      int                   // Total cards received (above threshold)
-	droppedCount   int                   // Cards dropped due to low confidence
-	jobsDiscovered map[string]bool       // Jobs we've seen so far
-	ctx            context.Context       // Context for broker operations
-	cancel         context.CancelFunc    // Cancel function
+	cardChan          <-chan broker.Message // Channel receiving cards from broker
+	progressChan      <-chan broker.Message // Channel receiving progress updates
+	testResultsChan   <-chan broker.Message // Channel receiving test results
+	buildMetadataChan <-chan broker.Message // Channel receiving build metadata
+	pendingCards      []Item                // Cards waiting to be merged
+	hashMap           map[string]*Item      // For grouping by hash
+	noveltyMap        map[string]store.FindingNoveltyInfo // Cached novelty info
+	noveltyLoaded     bool                  // Whether novelty map has been loaded
+	status            LoadStatus            // Current loading status
+	cardCount         int                   // Total cards received (above threshold)
+	droppedCount      int                   // Cards dropped due to low confidence
+	jobsDiscovered    map[string]bool       // Jobs we've seen so far
+	ctx               context.Context       // Context for broker operations
+	cancel            context.CancelFunc    // Cancel function
+
+	// Test results tracking
+	testResults []contracts.TestResult
+
+	// Build metadata (from CI provider)
+	buildMetadata *contracts.BuildMetadata
 
 	// Progress tracking
 	progress ProgressModel // Progress model for showing loading state
@@ -193,6 +312,9 @@ type MainModel struct {
 	// Tier counts for header display
 	uniqueCount int
 	noiseCount  int
+
+	// Warnings collected during analysis
+	warnings []string
 }
 
 // Start initializes and runs the TUI with the provided triage cards.
@@ -204,10 +326,38 @@ func Start(cards []contracts.TriageCard) error {
 // If broker is nil, uses the provided initial cards only (no streaming).
 // If broker is provided, subscribes to ci_failures_ranked for live updates.
 // Invariant: If broker is not nil, initialCards must be empty.
+// Note: This variant discards the analysis result. Use StartWithChannels directly
+// if you need to persist the collected data.
 func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) error {
-	// Enforce invariant: broker and initialCards are mutually exclusive
-	if brk != nil && len(initialCards) > 0 {
-		return fmt.Errorf("invalid arguments: broker and initialCards are mutually exclusive (broker != nil requires empty initialCards)")
+	// Subscribe to broker if provided
+	channels, err := SubscribeToBroker(brk)
+	if err != nil {
+		return err
+	}
+	_, err = StartWithChannels(channels, initialCards)
+	return err
+}
+
+// AnalysisResult contains the data collected during TUI session for persistence.
+type AnalysisResult struct {
+	Cards       []contracts.TriageCard
+	TestResults []contracts.TestResult
+	PipelineID  string
+	BuildNumber int
+}
+
+// StartWithChannels initializes the TUI with pre-subscribed broker channels.
+// Use this when you need to subscribe BEFORE submitting analysis to avoid race conditions.
+// If channels is nil or has nil CardChan, uses the provided initial cards only (no streaming).
+// Invariant: If channels has non-nil CardChan, initialCards must be empty.
+// Returns the collected analysis data for persistence after TUI exits.
+func StartWithChannels(channels *BrokerChannels, initialCards []contracts.TriageCard) (*AnalysisResult, error) {
+	// Determine if we're in streaming mode
+	streaming := channels != nil && channels.CardChan != nil
+
+	// Enforce invariant: streaming and initialCards are mutually exclusive
+	if streaming && len(initialCards) > 0 {
+		return nil, fmt.Errorf("invalid arguments: streaming channels and initialCards are mutually exclusive")
 	}
 
 	styles := DefaultStyles()
@@ -215,55 +365,106 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 
 	// Determine initial status
 	status := StatusComplete
-	if brk != nil {
+	if streaming {
 		status = StatusLoading
 	}
 
 	header := initializeHeader(styles, state, status)
-	listView := initializeListView(state)
 
-	channels, err := subscribeToBroker(brk)
-	if err != nil {
-		return err
+	// Extract build number from initial cards if available
+	if len(initialCards) > 0 && initialCards[0].BuildURL != "" {
+		if buildNum := extractBuildNumber(initialCards[0].BuildURL); buildNum != "" {
+			header.SetBuildNumber(buildNum)
+		}
 	}
+	listView := initializeListView(state)
 
 	// Get tier counts for header
 	unique, noise := getTierCounts(state.hashMap)
 
-	model := MainModel{
-		header:         header,
-		listView:       listView,
-		items:          state.items,
-		styles:         styles,
-		detailViewport: viewport.New(0, 0),
-		ready:          false,
-		tierFilter:     TierFilterAll, // Show all by default
-		broker:         brk,
-		cardChan:       channels.cardChan,
-		progressChan:   channels.progressChan,
-		pendingCards:   nil,
-		hashMap:        state.hashMap,
-		status:         status,
-		cardCount:      len(initialCards),
-		droppedCount:   0,
-		jobsDiscovered: state.jobsDiscovered,
-		ctx:            channels.ctx,
-		cancel:         channels.cancel,
-		progress:       NewProgressModel(),
-		uniqueCount:    unique,
-		noiseCount:     noise,
+	// Extract channels (handle nil case)
+	var cardChan <-chan broker.Message
+	var progressChan <-chan broker.Message
+	var testResultsChan <-chan broker.Message
+	var buildMetadataChan <-chan broker.Message
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if channels != nil {
+		cardChan = channels.CardChan
+		progressChan = channels.ProgressChan
+		testResultsChan = channels.TestResultsChan
+		buildMetadataChan = channels.BuildMetadataChan
+		ctx = channels.Ctx
+		cancel = channels.Cancel
 	}
-	// Update header with tier counts
+
+	model := MainModel{
+		header:            header,
+		listView:          listView,
+		items:             state.items,
+		styles:            styles,
+		detailViewport:    viewport.New(0, 0),
+		ready:             false,
+		tierFilter:        TierFilterAll, // Show all by default
+		viewMode:          ViewSummary,   // Start with summary view
+		summaryModel:      NewSummaryModel(styles),
+		testsModel:        NewTestsModel(styles),
+		cardChan:          cardChan,
+		progressChan:      progressChan,
+		testResultsChan:   testResultsChan,
+		buildMetadataChan: buildMetadataChan,
+		pendingCards:      nil,
+		hashMap:           state.hashMap,
+		noveltyMap:        state.noveltyMap,
+		noveltyLoaded:     len(state.noveltyMap) > 0 || len(initialCards) > 0,
+		status:            status,
+		cardCount:         len(initialCards),
+		droppedCount:      0,
+		jobsDiscovered:    state.jobsDiscovered,
+		ctx:               ctx,
+		cancel:            cancel,
+		progress:          NewProgressModel(),
+		uniqueCount:       unique,
+		noiseCount:        noise,
+	}
+	// Wire up delegate's novelty map pointer for render-time lookups
+	model.listView.GetDelegate().SetNoveltyMap(&model.noveltyMap)
+	// Update header with tier counts and view mode
 	model.header.SetTierCounts(unique, noise)
+	model.header.SetViewMode(ViewSummary) // Start with summary view
+	model.updateSummaryData()             // Initialize summary data
 	// Apply default tier filter (hide noise)
 	model.applyFilter()
 
 	p := tea.NewProgram(model, tea.WithAltScreen())
-	_, err = p.Run()
-	if channels.cancel != nil {
-		channels.cancel()
+	finalModel, err := p.Run()
+	if cancel != nil {
+		cancel()
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract collected data from final model
+	result := &AnalysisResult{}
+	if m, ok := finalModel.(MainModel); ok {
+		// Extract cards from items
+		for _, item := range m.items {
+			result.Cards = append(result.Cards, item.Card)
+		}
+		result.TestResults = m.testResults
+
+		// Extract pipeline ID and build number from metadata or first card
+		if m.buildMetadata != nil {
+			result.PipelineID = extractPipelineID(m.buildMetadata.URL)
+			result.BuildNumber = extractBuildNumberInt(m.buildMetadata.URL)
+		} else if len(result.Cards) > 0 {
+			result.PipelineID = extractPipelineID(result.Cards[0].BuildURL)
+			result.BuildNumber = extractBuildNumberInt(result.Cards[0].BuildURL)
+		}
+	}
+
+	return result, nil
 }
 
 // hashMapToSortedItems converts the hash map to a sorted slice of items
@@ -313,6 +514,14 @@ func (m MainModel) Init() tea.Cmd {
 		// Start listening for progress updates
 		cmds = append(cmds, listenForProgress(m.progressChan))
 	}
+	if m.testResultsChan != nil {
+		// Start listening for test results
+		cmds = append(cmds, listenForTestResults(m.testResultsChan))
+	}
+	if m.buildMetadataChan != nil {
+		// Start listening for build metadata
+		cmds = append(cmds, listenForBuildMetadata(m.buildMetadataChan))
+	}
 	// Start spinner animation for loading screen
 	cmds = append(cmds, SpinnerTick())
 	return tea.Batch(cmds...)
@@ -352,7 +561,42 @@ func listenForProgress(progressChan <-chan broker.Message) tea.Cmd {
 			Stage:   update.Stage,
 			Current: update.Current,
 			Total:   update.Total,
+			Warning: update.Warning,
 		}
+	}
+}
+
+// listenForTestResults returns a command that waits for test results from the broker
+func listenForTestResults(testResultsChan <-chan broker.Message) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-testResultsChan
+		if !ok {
+			// Channel closed
+			return nil
+		}
+
+		var result contracts.TestResult
+		if err := json.Unmarshal(msg.Value, &result); err != nil {
+			return nil
+		}
+		return testResultMsg{result: result}
+	}
+}
+
+// listenForBuildMetadata returns a command that waits for build metadata from the broker
+func listenForBuildMetadata(buildMetadataChan <-chan broker.Message) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-buildMetadataChan
+		if !ok {
+			// Channel closed
+			return nil
+		}
+
+		var metadata contracts.BuildMetadata
+		if err := json.Unmarshal(msg.Value, &metadata); err != nil {
+			return nil
+		}
+		return buildMetadataMsg{metadata: metadata}
 	}
 }
 
@@ -365,11 +609,34 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ProgressMsg:
 		m.progress, cmd = m.progress.Update(msg)
 		cmds = append(cmds, cmd)
+		// Track warnings
+		if msg.Warning != "" {
+			m.warnings = append(m.warnings, msg.Warning)
+			m.summaryModel.SetWarnings(m.warnings)
+		}
 		// Keep listening for more progress updates
 		if m.progressChan != nil {
 			cmds = append(cmds, listenForProgress(m.progressChan))
 		}
 		return m, tea.Batch(cmds...)
+
+	case testResultMsg:
+		// New test result arrived from broker
+		m.testResults = append(m.testResults, msg.result)
+		// Update test summary
+		m.updateTestSummary()
+		// Keep listening for more test results
+		if m.testResultsChan != nil {
+			cmds = append(cmds, listenForTestResults(m.testResultsChan))
+		}
+		return m, tea.Batch(cmds...)
+
+	case buildMetadataMsg:
+		// Build metadata arrived from broker
+		m.buildMetadata = &msg.metadata
+		// Update summary with authoritative build info
+		m.updateSummaryData()
+		return m, nil
 
 	case SpinnerTickMsg:
 		m.progress, cmd = m.progress.Update(msg)
@@ -378,6 +645,13 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cardReceivedMsg:
 		// New card arrived from broker - include all cards (low confidence shown dimmed)
 		m.cardCount++
+
+		// Extract build number from first card
+		if m.cardCount == 1 && msg.card.BuildURL != "" {
+			if buildNum := extractBuildNumber(msg.card.BuildURL); buildNum != "" {
+				m.header.SetBuildNumber(buildNum)
+			}
+		}
 
 		// Track low confidence count for display
 		if msg.card.ConfidenceScore < ConfidenceThreshold {
@@ -390,11 +664,16 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.jobsDiscovered[msg.card.JobName] = true
 		}
 		// Update job status in header (handles both new jobs and updating failed status)
-		failed := false
-		if exitStatus, ok := msg.card.Metadata["exit_status"]; ok && exitStatus != "0" {
-			failed = true
-		}
+		failed := msg.card.Metadata["job_state"] == "failed"
 		m.header.AddJob(msg.card.JobName, failed)
+
+		// Load novelty map on first card (if not already loaded)
+		if !m.noveltyLoaded && msg.card.BuildURL != "" {
+			m.noveltyMap = loadNoveltyMap([]contracts.TriageCard{msg.card})
+			m.noveltyLoaded = true
+			// Update delegate's HasHistory flag now that we have novelty data
+			m.listView.GetDelegate().SetNoveltyMap(&m.noveltyMap)
+		}
 
 		// Add card to pending
 		item := Item{Card: msg.card, Rank: 0}
@@ -416,12 +695,27 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(m.pendingCards) > 0 {
 			m.mergePendingCards()
 		}
-		return m, nil
+		// Continue listening for test results and progress (warnings) - ArtifactAgent
+		// may still be publishing after the analysis agent completes
+		if m.testResultsChan != nil {
+			cmds = append(cmds, listenForTestResults(m.testResultsChan))
+		}
+		if m.progressChan != nil {
+			cmds = append(cmds, listenForProgress(m.progressChan))
+		}
+		return m, tea.Batch(cmds...)
 
 	case pipelineErrorMsg:
 		m.status = StatusError
 		m.header.SetLoadStatus(m.status, m.cardCount, len(m.jobsDiscovered))
-		return m, nil
+		// Continue listening for test results and progress even on error
+		if m.testResultsChan != nil {
+			cmds = append(cmds, listenForTestResults(m.testResultsChan))
+		}
+		if m.progressChan != nil {
+			cmds = append(cmds, listenForProgress(m.progressChan))
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -483,7 +777,7 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.pendingCards) > 0 {
 				m.mergePendingCards()
 			}
-			return m, nil
+			return m, tea.ClearScreen
 		case "0":
 			// Show all tiers
 			m.tierFilter = TierFilterAll
@@ -517,9 +811,27 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.header.SetSearch(m.searchQuery, m.searchMode)
 			return m, nil
 		case "enter":
-			// Toggle focus to detail viewport
-			m.detailFocused = !m.detailFocused
+			// Toggle focus to detail viewport (only in logs view)
+			if m.viewMode == ViewLogs {
+				m.detailFocused = !m.detailFocused
+			}
 			return m, nil
+		case "s":
+			// Switch to summary view
+			m.viewMode = ViewSummary
+			m.header.SetViewMode(ViewSummary)
+			m.updateSummaryData()
+			return m, tea.ClearScreen
+		case "t":
+			// Switch to tests view
+			m.viewMode = ViewTests
+			m.header.SetViewMode(ViewTests)
+			return m, tea.ClearScreen
+		case "l":
+			// Switch to logs view
+			m.viewMode = ViewLogs
+			m.header.SetViewMode(ViewLogs)
+			return m, tea.ClearScreen
 		case "esc":
 			// If detail is focused, return to list
 			if m.detailFocused {
@@ -535,18 +847,25 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Route updates based on focus
-	if m.detailFocused {
-		// Detail viewport is focused, send keys to it
-		m.detailViewport, cmd = m.detailViewport.Update(msg)
+	// Route updates based on view mode and focus
+	switch m.viewMode {
+	case ViewTests:
+		// Route to tests model for scrolling
+		m.testsModel, cmd = m.testsModel.Update(msg)
 		cmds = append(cmds, cmd)
-	} else {
-		// List is focused, send keys to it
-		m.listView, cmd = m.listView.Update(msg)
-		cmds = append(cmds, cmd)
-		// Update detail content when list selection changes
-		if selectedItem, ok := m.listView.GetSelectedItem(); ok {
-			m.updateDetailContent(selectedItem)
+	case ViewLogs:
+		if m.detailFocused {
+			// Detail viewport is focused, send keys to it
+			m.detailViewport, cmd = m.detailViewport.Update(msg)
+			cmds = append(cmds, cmd)
+		} else {
+			// List is focused, send keys to it
+			m.listView, cmd = m.listView.Update(msg)
+			cmds = append(cmds, cmd)
+			// Update detail content when list selection changes
+			if selectedItem, ok := m.listView.GetSelectedItem(); ok {
+				m.updateDetailContent(selectedItem)
+			}
 		}
 	}
 
@@ -585,4 +904,142 @@ func (m *MainModel) mergePendingCards() {
 	if selectedItem, ok := m.listView.GetSelectedItem(); ok {
 		m.updateDetailContent(selectedItem)
 	}
+
+	// Update summary data so it reflects latest state
+	m.updateSummaryData()
+}
+
+// updateSummaryData updates the summary model with current data.
+func (m *MainModel) updateSummaryData() {
+	// Set size
+	m.summaryModel.SetSize(m.width, m.height-4) // -4 for header
+
+	// Set log findings counts
+	m.summaryModel.SetLogFindings(m.uniqueCount, m.noiseCount, m.cardCount, m.droppedCount, len(m.header.availableJobs))
+
+	// Count jobs by status
+	failedJobs := 0
+	passedJobs := 0
+	otherJobs := 0
+	for _, job := range m.header.availableJobs {
+		if job.Failed {
+			failedJobs++
+		} else {
+			passedJobs++
+		}
+	}
+	m.summaryModel.SetJobCounts(failedJobs, passedJobs, otherJobs)
+
+	// Use authoritative build metadata if available, otherwise unknown
+	if m.buildMetadata != nil {
+		m.summaryModel.SetBuildInfo(m.buildMetadata.State, m.buildMetadata.Number, m.buildMetadata.URL)
+		m.summaryModel.SetBuildMetadata(
+			m.buildMetadata.Branch,
+			m.buildMetadata.Commit,
+			m.buildMetadata.Message,
+			m.buildMetadata.Source,
+			m.buildMetadata.Duration,
+		)
+	} else {
+		// No authoritative metadata - status is unknown
+		m.summaryModel.SetBuildInfo("unknown", "", "")
+	}
+}
+
+// updateTestSummary builds a test summary from collected test results
+func (m *MainModel) updateTestSummary() {
+	if len(m.testResults) == 0 {
+		return
+	}
+
+	// Get pipeline info from first result
+	pipelineID := ""
+	buildNumber := 0
+	if len(m.testResults) > 0 {
+		pipelineID = m.testResults[0].PipelineID
+		buildNumber = m.testResults[0].BuildNumber
+	}
+
+	// Open test history for flaky detection
+	history, err := store.NewTestHistory("")
+	if err != nil {
+		history = nil
+	}
+	if history != nil {
+		defer history.Close()
+	}
+
+	ctx := context.Background()
+
+	// Count passed/failed and classify failures
+	passed := 0
+	var novelFailures []contracts.TestFailure
+	var flakyFailures []contracts.TestFailure
+
+	for _, result := range m.testResults {
+		if result.Passed {
+			passed++
+		} else {
+			failure := contracts.TestFailure{
+				TestName:       result.TestName,
+				FailureMessage: result.FailureMessage,
+			}
+
+			// Check test history for flakiness and last failure info
+			isFlaky := false
+			if history != nil && pipelineID != "" {
+				flakeInfo, err := history.GetTestFlakeInfo(ctx, pipelineID, result.TestName, buildNumber)
+				if err == nil {
+					// Always capture last failure date if available
+					if !flakeInfo.LastFailedAt.IsZero() {
+						failure.LastFailedAt = flakeInfo.LastFailedAt.Format(time.RFC3339)
+					}
+					// Mark as flaky if it meets the criteria
+					if flakeInfo.IsFlaky {
+						isFlaky = true
+						failure.IsFlaky = true
+						failure.HistoryRuns = flakeInfo.TotalRuns
+						failure.HistoryFails = flakeInfo.FailedRuns
+					}
+				}
+			}
+
+			if isFlaky {
+				flakyFailures = append(flakyFailures, failure)
+			} else {
+				novelFailures = append(novelFailures, failure)
+			}
+		}
+	}
+
+	summary := &contracts.TestSummary{
+		PipelineID:    pipelineID,
+		BuildNumber:   buildNumber,
+		TotalTests:    len(m.testResults),
+		PassedCount:   passed,
+		FailedCount:   len(novelFailures) + len(flakyFailures),
+		NovelFailures: novelFailures,
+		FlakyFailures: flakyFailures,
+	}
+
+	m.summaryModel.SetTestSummary(summary)
+	m.testsModel.SetTestData(summary, m.testResults)
+}
+
+// extractBuildNumber extracts the build number from a CI build URL.
+// Supports Buildkite and GitHub Actions URL formats.
+func extractBuildNumber(buildURL string) string {
+	// Buildkite: https://buildkite.com/org/pipeline/builds/123
+	buildkitePattern := regexp.MustCompile(`/builds/(\d+)`)
+	if matches := buildkitePattern.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	// GitHub Actions: https://github.com/owner/repo/actions/runs/123456
+	githubPattern := regexp.MustCompile(`/actions/runs/(\d+)`)
+	if matches := githubPattern.FindStringSubmatch(buildURL); len(matches) > 1 {
+		return matches[1]
+	}
+
+	return ""
 }

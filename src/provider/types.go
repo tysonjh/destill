@@ -11,12 +11,18 @@ type BuildRef struct {
 
 // Build represents a CI build with jobs
 type Build struct {
-	ID        string
-	Number    string
-	URL       string
-	State     string
-	Timestamp time.Time
-	Jobs      []Job
+	ID         string
+	Number     string
+	URL        string
+	State      string    // passed, failed, canceled, running, etc.
+	Branch     string    // Git branch name
+	Commit     string    // Git commit SHA
+	Message    string    // Commit message
+	Source     string    // Build trigger: webhook, api, schedule, ui
+	StartedAt  time.Time // When first job started
+	FinishedAt time.Time // When build completed (zero if still running)
+	Timestamp  time.Time // Created at
+	Jobs       []Job
 }
 
 // Job represents a single job within a build

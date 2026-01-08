@@ -15,6 +15,7 @@ type JobInfo struct {
 // Header represents the top status bar component.
 type Header struct {
 	projectStatus      string
+	buildNumber        string // Build number being analyzed
 	selectedFilter     string // Formatted display string
 	rawFilterName      string // Raw filter name for comparison
 	availableJobs      []JobInfo
@@ -34,6 +35,9 @@ type Header struct {
 	uniqueCount int
 	noiseCount  int
 	tierFilter  int // 0=all (default), 1=unique only, 2=noise only
+
+	// View mode - controls which sections are shown
+	viewMode ViewMode
 }
 
 // NewHeaderWithStyles creates a new header with custom styles
@@ -149,6 +153,16 @@ func (h *Header) SetTierFilter(filter int) {
 	h.tierFilter = filter
 }
 
+// SetViewMode updates the current view mode
+func (h *Header) SetViewMode(mode ViewMode) {
+	h.viewMode = mode
+}
+
+// SetBuildNumber updates the build number display
+func (h *Header) SetBuildNumber(number string) {
+	h.buildNumber = number
+}
+
 // AddJob adds a new job to the available jobs list
 func (h *Header) AddJob(jobName string, failed bool) {
 	// Check if already exists - if so, update failed status
@@ -197,13 +211,10 @@ func (h Header) Render(width int) string {
 		Bold(true).
 		Padding(0, 2)
 
+	// Include build number if available
 	statusText := h.projectStatus
-	if h.cardCount > 0 {
-		if h.lowConfidenceCount > 0 {
-			statusText = fmt.Sprintf("%s (%d findings, %d low conf, %d jobs)", statusText, h.cardCount, h.lowConfidenceCount, h.jobCount)
-		} else {
-			statusText = fmt.Sprintf("%s (%d findings, %d jobs)", statusText, h.cardCount, h.jobCount)
-		}
+	if h.buildNumber != "" {
+		statusText = fmt.Sprintf("%s #%s", h.projectStatus, h.buildNumber)
 	}
 	status := statusStyle.Render(statusText)
 
@@ -217,62 +228,72 @@ func (h Header) Render(width int) string {
 		pending = pendingStyle.Render(fmt.Sprintf("⚡ %d new (r)", h.pendingCount))
 	}
 
-	// Tier counts section - colored numbers matching delegate tier colors
-	// Format: Unique:3 Noise:8 with active filter highlighted
-	// Note: Using TextSecondary for inactive instead of Faint() for better terminal compatibility
-	uniqueStyle := lipgloss.NewStyle().Foreground(h.styles.Tier1Color)
-	noiseStyle := lipgloss.NewStyle().Foreground(h.styles.Tier3Color)
+	// Build left section based on view mode
+	var leftSection string
 
-	// Highlight active tier filter with bold, dim inactive
-	switch h.tierFilter {
-	case 0: // All (default)
-		uniqueStyle = uniqueStyle.Bold(true)
-		noiseStyle = noiseStyle.Bold(true)
-	case 1: // Unique only
-		uniqueStyle = uniqueStyle.Bold(true)
-		noiseStyle = lipgloss.NewStyle().Foreground(h.styles.TextSecondary)
-	case 2: // Noise only
-		uniqueStyle = lipgloss.NewStyle().Foreground(h.styles.TextSecondary)
-		noiseStyle = noiseStyle.Bold(true)
-	}
-
-	unique := uniqueStyle.Render(fmt.Sprintf("Unique:%d", h.uniqueCount))
-	noise := noiseStyle.Render(fmt.Sprintf("Noise:%d", h.noiseCount))
-
-	tierStyle := lipgloss.NewStyle().Padding(0, 1)
-	tiers := tierStyle.Render(fmt.Sprintf("│ %s %s │", unique, noise))
-
-	// Filter section - truncate if necessary to prevent wrapping
-	filterStyle := lipgloss.NewStyle().
-		Foreground(h.styles.PrimaryBlue).
-		Bold(true).
-		Padding(0, 2).
-		MaxWidth(width / 4) // Limit filter width to prevent wrapping
-
-	filter := filterStyle.Render(fmt.Sprintf("⚙️ Job: %s", h.selectedFilter))
-
-	// Search section
-	var searchText string
-	if h.searchMode {
-		searchText = fmt.Sprintf("🔍 Search: %s█", h.searchQuery)
-	} else if h.searchQuery != "" {
-		searchText = fmt.Sprintf("🔍 Search: %s", h.searchQuery)
+	if h.viewMode == ViewSummary || h.viewMode == ViewTests {
+		// Summary/Tests view: just show status and pending (no filters)
+		leftSection = lipgloss.JoinHorizontal(lipgloss.Left, status, pending)
 	} else {
-		searchText = "🔍 [/] to search"
+		// Logs view: show all controls
+
+		// Tier counts section - colored numbers matching delegate tier colors
+		// Format: Unique:3 Noise:8 with active filter highlighted
+		// Note: Using TextSecondary for inactive instead of Faint() for better terminal compatibility
+		uniqueStyle := lipgloss.NewStyle().Foreground(h.styles.Tier1Color)
+		noiseStyle := lipgloss.NewStyle().Foreground(h.styles.Tier3Color)
+
+		// Highlight active tier filter with bold, dim inactive
+		switch h.tierFilter {
+		case 0: // All (default)
+			uniqueStyle = uniqueStyle.Bold(true)
+			noiseStyle = noiseStyle.Bold(true)
+		case 1: // Unique only
+			uniqueStyle = uniqueStyle.Bold(true)
+			noiseStyle = lipgloss.NewStyle().Foreground(h.styles.TextSecondary)
+		case 2: // Noise only
+			uniqueStyle = lipgloss.NewStyle().Foreground(h.styles.TextSecondary)
+			noiseStyle = noiseStyle.Bold(true)
+		}
+
+		unique := uniqueStyle.Render(fmt.Sprintf("Unique:%d", h.uniqueCount))
+		noise := noiseStyle.Render(fmt.Sprintf("Noise:%d", h.noiseCount))
+
+		tierStyle := lipgloss.NewStyle().Padding(0, 1)
+		tiers := tierStyle.Render(fmt.Sprintf("│ %s %s │", unique, noise))
+
+		// Filter section - truncate if necessary to prevent wrapping
+		filterStyle := lipgloss.NewStyle().
+			Foreground(h.styles.PrimaryBlue).
+			Bold(true).
+			Padding(0, 2).
+			MaxWidth(width / 4) // Limit filter width to prevent wrapping
+
+		filter := filterStyle.Render(fmt.Sprintf("Job: %s", h.selectedFilter))
+
+		// Search section
+		var searchText string
+		if h.searchMode {
+			searchText = fmt.Sprintf("Search: %s_", h.searchQuery)
+		} else if h.searchQuery != "" {
+			searchText = fmt.Sprintf("Search: %s", h.searchQuery)
+		} else {
+			searchText = "[/] search"
+		}
+
+		searchStyle := lipgloss.NewStyle().
+			Foreground(h.styles.TextSecondary).
+			Padding(0, 2).
+			MaxWidth(width / 4) // Limit search width to prevent wrapping
+		if h.searchMode {
+			searchStyle = searchStyle.Foreground(h.styles.PrimaryBlue)
+		}
+
+		search := searchStyle.Render(searchText)
+
+		// Combine sections
+		leftSection = lipgloss.JoinHorizontal(lipgloss.Left, status, pending, tiers, filter, search)
 	}
-
-	searchStyle := lipgloss.NewStyle().
-		Foreground(h.styles.TextSecondary).
-		Padding(0, 2).
-		MaxWidth(width / 4) // Limit search width to prevent wrapping
-	if h.searchMode {
-		searchStyle = searchStyle.Foreground(h.styles.PrimaryBlue)
-	}
-
-	search := searchStyle.Render(searchText)
-
-	// Combine sections
-	leftSection := lipgloss.JoinHorizontal(lipgloss.Left, status, pending, tiers, filter, search)
 
 	// Create header bar - no background to ensure visibility on any terminal
 	// Note: BorderBottom adds 2 chars (left and right corners), so content width is width - 2
