@@ -18,7 +18,13 @@ func (m MainModel) renderListPanel(width, height int) string {
 
 	// Add column headers
 	// Truncate to width-4 to account for padding (2 chars)
-	headerText := "Seen | Novel | Message"
+	// Only show "Novel" column if history exists
+	var headerText string
+	if len(m.noveltyMap) > 0 {
+		headerText = "Seen | Novel | Message"
+	} else {
+		headerText = "Seen | Message"
+	}
 	truncatedHeaderText := Truncate(headerText, width-4, true)
 	headerRow := lipgloss.NewStyle().
 		Foreground(m.styles.PrimaryBlue).

@@ -671,6 +671,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !m.noveltyLoaded && msg.card.BuildURL != "" {
 			m.noveltyMap = loadNoveltyMap([]contracts.TriageCard{msg.card})
 			m.noveltyLoaded = true
+			// Update delegate's HasHistory flag now that we have novelty data
+			m.listView.GetDelegate().SetNoveltyMap(&m.noveltyMap)
 		}
 
 		// Add card to pending

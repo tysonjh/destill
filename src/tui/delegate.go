@@ -25,6 +25,7 @@ type Delegate struct {
 	SeenWidth   int
 	styles      *StyleConfig
 	NoveltyMap  *map[string]store.FindingNoveltyInfo // Pointer to model's novelty map
+	HasHistory  bool                                  // True if novelty history exists (hide column if false)
 }
 
 // NewDelegate creates a new triage table delegate with default styles
@@ -35,9 +36,11 @@ func NewDelegate() Delegate {
 	}
 }
 
-// SetNoveltyMap sets the novelty map reference for render-time lookups
+// SetNoveltyMap sets the novelty map reference for render-time lookups.
+// HasHistory is set to true only if the map contains entries (history exists).
 func (d *Delegate) SetNoveltyMap(m *map[string]store.FindingNoveltyInfo) {
 	d.NoveltyMap = m
+	d.HasHistory = m != nil && len(*m) > 0
 }
 
 // SetColumnWidths sets the widths for the seen (recurrence) column
@@ -114,24 +117,28 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	seenFmt := fmt.Sprintf("%%%dd", d.SeenWidth)
 	seenCol := fmt.Sprintf(seenFmt, entry.GetRecurrence())
 
-	// Format "Novel" column - star for novel, space otherwise
-	// Look up novelty from the map at render time
+	// Format "Novel" column - only shown if history exists
 	var novelCol string
-	isNovel := true // Default to novel if no history available
-	if d.NoveltyMap != nil {
-		if _, found := (*d.NoveltyMap)[entry.Card.MessageHash]; found {
-			isNovel = false // Found in history = not novel
+	if d.HasHistory {
+		isNovel := true
+		if d.NoveltyMap != nil {
+			if _, found := (*d.NoveltyMap)[entry.Card.MessageHash]; found {
+				isNovel = false // Found in history = not novel
+			}
 		}
-	}
-	if isNovel {
-		novelCol = "★"
-	} else {
-		novelCol = " "
+		if isNovel {
+			novelCol = "★"
+		} else {
+			novelCol = " "
+		}
 	}
 
 	// Calculate available width for snippet
-	// Fixed columns: seen + novel (1) + separators (6: " │ " twice)
-	fixedWidth := d.SeenWidth + 1 + 10
+	// Fixed columns: seen + separators, plus novel column if showing
+	fixedWidth := d.SeenWidth + 5 // " │ " separator
+	if d.HasHistory {
+		fixedWidth += 1 + 5 // novel (1 char) + " │ " separator
+	}
 	availableWidth := m.Width() - fixedWidth - listRenderingOverhead
 
 	var snippet string
@@ -157,16 +164,21 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	// Style the novel indicator
 	novelStyle := lipgloss.NewStyle().Foreground(d.styles.NovelColor).Bold(true)
 
-	// Build row: seen │ novel │ message
-	if isSelected {
-		// When selected, apply uniform style to entire row
-		line := fmt.Sprintf("%s │ %s │ %s", seenCol, novelCol, snippet)
-		fmt.Fprint(w, rowStyle.Render(line))
+	// Build row: with or without novel column based on history availability
+	if d.HasHistory {
+		// Full row: seen │ novel │ message
+		if isSelected {
+			line := fmt.Sprintf("%s │ %s │ %s", seenCol, novelCol, snippet)
+			fmt.Fprint(w, rowStyle.Render(line))
+		} else {
+			seenPart := rowStyle.Render(seenCol + " │ ")
+			novelPart := novelStyle.Render(novelCol)
+			msgPart := rowStyle.Render(" │ " + snippet)
+			fmt.Fprint(w, seenPart+novelPart+msgPart)
+		}
 	} else {
-		// When not selected, style novel indicator separately
-		seenPart := rowStyle.Render(seenCol + " │ ")
-		novelPart := novelStyle.Render(novelCol)
-		msgPart := rowStyle.Render(" │ " + snippet)
-		fmt.Fprint(w, seenPart+novelPart+msgPart)
+		// No history: seen │ message (skip novel column)
+		line := fmt.Sprintf("%s │ %s", seenCol, snippet)
+		fmt.Fprint(w, rowStyle.Render(line))
 	}
 }

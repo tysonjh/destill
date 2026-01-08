@@ -30,28 +30,31 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 		Render(headerText)
 	fmt.Fprintf(&content, "%s\n", header)
 
-	// Confidence and Novelty info
+	// Confidence info
 	confText := fmt.Sprintf("Confidence: %.2f", item.Card.ConfidenceScore)
-	var noveltyText string
-	// Look up novelty from the model's map at render time
-	if novelty, found := m.noveltyMap[item.Card.MessageHash]; found {
-		if novelty.SeenInPassingJobs {
-			noveltyText = fmt.Sprintf("History: Seen in %d builds (%d passing, %d failing)",
-				novelty.TotalOccurrences,
-				novelty.PassingOccurs,
-				novelty.FailingOccurs)
-		} else {
-			noveltyText = fmt.Sprintf("History: Seen in %d failing builds",
-				novelty.FailingOccurs)
-		}
-	} else {
-		// Not found in map = novel (never seen before in history)
-		noveltyText = "History: Novel finding (never seen before)"
-	}
-
 	metaStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)
 	fmt.Fprintf(&content, "%s\n", metaStyle.Render(confText))
-	fmt.Fprintf(&content, "%s\n\n", metaStyle.Render(noveltyText))
+
+	// Novelty info - only show if history exists
+	if len(m.noveltyMap) > 0 {
+		var noveltyText string
+		if novelty, found := m.noveltyMap[item.Card.MessageHash]; found {
+			if novelty.SeenInPassingJobs {
+				noveltyText = fmt.Sprintf("History: Seen in %d builds (%d passing, %d failing)",
+					novelty.TotalOccurrences,
+					novelty.PassingOccurs,
+					novelty.FailingOccurs)
+			} else {
+				noveltyText = fmt.Sprintf("History: Seen in %d failing builds",
+					novelty.FailingOccurs)
+			}
+		} else {
+			// Not found in map but history exists = novel
+			noveltyText = "History: Novel finding (never seen before)"
+		}
+		fmt.Fprintf(&content, "%s\n", metaStyle.Render(noveltyText))
+	}
+	fmt.Fprintln(&content)
 
 	// Pre-context - clean and wrap each line
 	preContext := item.GetPreContext()
