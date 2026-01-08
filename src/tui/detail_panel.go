@@ -33,20 +33,20 @@ func (m MainModel) renderDetail(item Item, maxWidth int) string {
 	// Confidence and Novelty info
 	confText := fmt.Sprintf("Confidence: %.2f", item.Card.ConfidenceScore)
 	var noveltyText string
-	if item.Novelty.IsNovel {
-		noveltyText = "History: Novel finding (never seen before)"
-	} else if item.Novelty.TotalOccurrences > 0 {
-		if item.Novelty.SeenInPassingJobs {
+	// Look up novelty from the model's map at render time
+	if novelty, found := m.noveltyMap[item.Card.MessageHash]; found {
+		if novelty.SeenInPassingJobs {
 			noveltyText = fmt.Sprintf("History: Seen in %d builds (%d passing, %d failing)",
-				item.Novelty.TotalOccurrences,
-				item.Novelty.PassingOccurs,
-				item.Novelty.FailingOccurs)
+				novelty.TotalOccurrences,
+				novelty.PassingOccurs,
+				novelty.FailingOccurs)
 		} else {
 			noveltyText = fmt.Sprintf("History: Seen in %d failing builds",
-				item.Novelty.FailingOccurs)
+				novelty.FailingOccurs)
 		}
 	} else {
-		noveltyText = "History: No historical data"
+		// Not found in map = novel (never seen before in history)
+		noveltyText = "History: Novel finding (never seen before)"
 	}
 
 	metaStyle := lipgloss.NewStyle().Foreground(m.styles.TextSecondary)

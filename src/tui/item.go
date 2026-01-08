@@ -2,16 +2,16 @@ package tui
 
 import (
 	"destill-agent/src/contracts"
-	"destill-agent/src/store"
 )
 
 // Item represents an item that can be displayed in the triage list.
 // It wraps the domain TriageCard and implements bubbles/list.Item.
+// Note: Novelty info is stored separately in the model's noveltyMap
+// and looked up by MessageHash at render time.
 type Item struct {
-	Card    contracts.TriageCard
-	Rank    int
-	Tier    int                    // 1=unique failure, 2=frequency spike, 3=common noise
-	Novelty store.FindingNoveltyInfo // Historical novelty info
+	Card contracts.TriageCard
+	Rank int
+	Tier int // 1=unique failure, 2=frequency spike, 3=common noise
 }
 
 // FilterValue is the value used for fuzzy filtering.
@@ -28,11 +28,6 @@ func (i Item) Description() string { return i.Card.JobName }
 // GetRecurrence returns the recurrence count for this item.
 func (i Item) GetRecurrence() int {
 	return i.Card.GetRecurrenceCount()
-}
-
-// IsNovel returns true if this finding has never been seen before.
-func (i Item) IsNovel() bool {
-	return i.Novelty.IsNovel
 }
 
 func (i Item) GetPreContext() []string {

@@ -8,6 +8,8 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"destill-agent/src/store"
 )
 
 const (
@@ -18,9 +20,11 @@ const (
 )
 
 // Delegate renders triage items as table rows.
+// NoveltyMap is looked up at render time to determine if a finding is novel.
 type Delegate struct {
-	SeenWidth int
-	styles    *StyleConfig
+	SeenWidth   int
+	styles      *StyleConfig
+	NoveltyMap  *map[string]store.FindingNoveltyInfo // Pointer to model's novelty map
 }
 
 // NewDelegate creates a new triage table delegate with default styles
@@ -29,6 +33,11 @@ func NewDelegate() Delegate {
 		SeenWidth: 4, // default minimum for "Seen" column
 		styles:    DefaultStyles(),
 	}
+}
+
+// SetNoveltyMap sets the novelty map reference for render-time lookups
+func (d *Delegate) SetNoveltyMap(m *map[string]store.FindingNoveltyInfo) {
+	d.NoveltyMap = m
 }
 
 // SetColumnWidths sets the widths for the seen (recurrence) column
@@ -106,8 +115,15 @@ func (d Delegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	seenCol := fmt.Sprintf(seenFmt, entry.GetRecurrence())
 
 	// Format "Novel" column - star for novel, space otherwise
+	// Look up novelty from the map at render time
 	var novelCol string
-	if entry.IsNovel() {
+	isNovel := true // Default to novel if no history available
+	if d.NoveltyMap != nil {
+		if _, found := (*d.NoveltyMap)[entry.Card.MessageHash]; found {
+			isNovel = false // Found in history = not novel
+		}
+	}
+	if isNovel {
 		novelCol = "★"
 	} else {
 		novelCol = " "

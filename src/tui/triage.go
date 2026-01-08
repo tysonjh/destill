@@ -51,6 +51,7 @@ type initialState struct {
 	failedJobs     []JobInfo
 	passedJobs     []JobInfo
 	allJobs        []JobInfo
+	noveltyMap     map[string]store.FindingNoveltyInfo
 }
 
 // BrokerChannels holds the channels and context for broker subscriptions.
@@ -149,13 +150,6 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 			existing.Card.SetRecurrenceCount(existing.GetRecurrence() + 1)
 		} else {
 			item := Item{Card: card, Rank: 0}
-			// Apply novelty info if available
-			if novelty, ok := noveltyMap[card.MessageHash]; ok {
-				item.Novelty = novelty
-			} else {
-				// Not in history = novel finding
-				item.Novelty = store.FindingNoveltyInfo{IsNovel: true}
-			}
 			hashMap[card.MessageHash] = &item
 		}
 		if !jobsDiscovered[card.JobName] {
@@ -190,6 +184,7 @@ func buildInitialState(cards []contracts.TriageCard) *initialState {
 		failedJobs:     failedJobs,
 		passedJobs:     passedJobs,
 		allJobs:        allJobs,
+		noveltyMap:     noveltyMap,
 	}
 }
 
@@ -420,6 +415,8 @@ func StartWithChannels(channels *BrokerChannels, initialCards []contracts.Triage
 		buildMetadataChan: buildMetadataChan,
 		pendingCards:      nil,
 		hashMap:           state.hashMap,
+		noveltyMap:        state.noveltyMap,
+		noveltyLoaded:     len(state.noveltyMap) > 0 || len(initialCards) > 0,
 		status:            status,
 		cardCount:         len(initialCards),
 		droppedCount:      0,
@@ -430,6 +427,8 @@ func StartWithChannels(channels *BrokerChannels, initialCards []contracts.Triage
 		uniqueCount:       unique,
 		noiseCount:        noise,
 	}
+	// Wire up delegate's novelty map pointer for render-time lookups
+	model.listView.GetDelegate().SetNoveltyMap(&model.noveltyMap)
 	// Update header with tier counts and view mode
 	model.header.SetTierCounts(unique, noise)
 	model.header.SetViewMode(ViewSummary) // Start with summary view
@@ -674,13 +673,8 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.noveltyLoaded = true
 		}
 
-		// Add card to pending with novelty info
+		// Add card to pending
 		item := Item{Card: msg.card, Rank: 0}
-		if novelty, ok := m.noveltyMap[msg.card.MessageHash]; ok {
-			item.Novelty = novelty
-		} else {
-			item.Novelty = store.FindingNoveltyInfo{IsNovel: true}
-		}
 		m.pendingCards = append(m.pendingCards, item)
 		// Stay on "ALL" - failed job findings are boosted to top by confidence
 		m.header.SetPendingCount(len(m.pendingCards))
