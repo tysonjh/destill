@@ -67,8 +67,10 @@ Ask your assistant:
 
 | Variable | Description |
 |----------|-------------|
-| `BUILDKITE_API_TOKEN` | Buildkite API token with `read_builds` and `read_build_logs` scope|
+| `BUILDKITE_API_TOKEN` | Buildkite API token with `read_builds` and `read_build_logs` scope |
 | `GITHUB_TOKEN` | GitHub PAT with `repo` scope |
+| `ARTIFACT_SERVER_USER` | Username for custom artifact servers requiring Basic auth |
+| `ARTIFACT_SERVER_PASSWORD` | Password for custom artifact servers requiring Basic auth |
 
 ## Development
 
