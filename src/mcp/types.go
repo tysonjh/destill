@@ -21,7 +21,7 @@ type TieredResponse struct {
 type BuildInfo struct {
 	URL        string `json:"url"`
 	Number     string `json:"number,omitempty"`
-	Status     string `json:"status"`
+	Status     string `json:"state"`
 	Branch     string `json:"branch,omitempty"`
 	Commit     string `json:"commit,omitempty"`
 	Message    string `json:"message,omitempty"`

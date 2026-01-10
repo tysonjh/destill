@@ -144,7 +144,9 @@ func recordAnalysisResult(result *tui.AnalysisResult) {
 	if result == nil || (len(result.Cards) == 0 && len(result.TestResults) == 0) {
 		return
 	}
-	if result.PipelineID == "" || result.BuildNumber == 0 {
+	pipelineID := result.PipelineID()
+	buildNumber := result.BuildNumber()
+	if pipelineID == "" || buildNumber == 0 {
 		return
 	}
 
@@ -155,7 +157,7 @@ func recordAnalysisResult(result *tui.AnalysisResult) {
 	defer history.Close()
 
 	ctx := context.Background()
-	_ = history.RecordBuildData(ctx, result.PipelineID, result.BuildNumber, result.TestResults, result.Cards)
+	_ = history.RecordBuildData(ctx, pipelineID, buildNumber, result.Metadata, result.TestResults, result.Cards)
 }
 
 // displayJSON collects findings from the broker and outputs them as JSON.

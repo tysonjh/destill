@@ -29,8 +29,10 @@ type TriageCard struct {
 	MessageHash string `json:"message_hash"`
 
 	// Source
-	Source   string `json:"source"`
-	JobName  string `json:"job_name"`
+	Source  string `json:"source"`
+	JobName string `json:"job_name"`
+	// TODO: BuildURL is redundant with BuildMetadata.URL. Consider removing once
+	// all consumers use BuildMetadata as the canonical source for build-level info.
 	BuildURL string `json:"build_url"`
 
 	// Content

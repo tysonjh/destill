@@ -30,7 +30,7 @@ type Server struct {
 func NewServer(st store.Store) *Server {
 	mcpSrv := server.NewMCPServer(
 		"destill",
-		"0.2.0",
+		"0.3.0",
 		server.WithToolCapabilities(true),
 	)
 
@@ -89,7 +89,7 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	limit := request.GetInt("limit", 15)
 
 	// Run analysis
-	cards, testResults, buildInfo, testSummary, err := s.runAnalysis(ctx, url)
+	cards, testResults, buildInfo, buildMeta, testSummary, err := s.runAnalysis(ctx, url)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("analysis failed: %v", err)), nil
 	}
@@ -106,7 +106,7 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	}
 
 	// Record to SQLite history for novelty/flaky detection (best-effort)
-	s.recordBuildData(ctx, buildInfo, testResults, cards)
+	s.recordBuildData(ctx, buildInfo, buildMeta, testResults, cards)
 
 	// Load novelty map for finding classification (best-effort)
 	noveltyMap := s.loadNoveltyMap(ctx, buildInfo)
@@ -161,15 +161,15 @@ func (s *Server) handleGetFindingDetails(ctx context.Context, request mcp.CallTo
 }
 
 // runAnalysis runs the full analysis pipeline and collects cards.
-// Returns cards, test results, build info, and test summary.
-func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, []contracts.TestResult, BuildInfo, *contracts.TestSummary, error) {
+// Returns cards, test results, build info, build metadata, and test summary.
+func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.TriageCard, []contracts.TestResult, BuildInfo, *contracts.BuildMetadata, *contracts.TestSummary, error) {
 	// Validate URL and token upfront to fail fast
 	ref, err := provider.ParseURL(buildURL)
 	if err != nil {
-		return nil, nil, BuildInfo{}, nil, provider.WrapError(err)
+		return nil, nil, BuildInfo{}, nil, nil, provider.WrapError(err)
 	}
 	if err := provider.ValidateToken(ref); err != nil {
-		return nil, nil, BuildInfo{}, nil, provider.WrapError(err)
+		return nil, nil, BuildInfo{}, nil, nil, provider.WrapError(err)
 	}
 
 	// Create in-memory broker and start pipeline
@@ -182,19 +182,19 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	// Subscribe to topics BEFORE starting pipeline to avoid race conditions
 	findingsCh, err := msgBroker.Subscribe(ctx, contracts.TopicAnalysisFindings, "mcp-server-findings")
 	if err != nil {
-		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to findings: %w", err)
+		return nil, nil, BuildInfo{}, nil, nil, fmt.Errorf("failed to subscribe to findings: %w", err)
 	}
 	testsCh, err := msgBroker.Subscribe(ctx, contracts.TopicTestResults, "mcp-server-tests")
 	if err != nil {
-		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
+		return nil, nil, BuildInfo{}, nil, nil, fmt.Errorf("failed to subscribe to test results: %w", err)
 	}
 	metadataCh, err := msgBroker.Subscribe(ctx, contracts.TopicBuildMetadata, "mcp-server-metadata")
 	if err != nil {
-		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
+		return nil, nil, BuildInfo{}, nil, nil, fmt.Errorf("failed to subscribe to build metadata: %w", err)
 	}
 
 	if err := pipeline.Start(msgBroker, pipelineCtx); err != nil {
-		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to start pipeline: %w", err)
+		return nil, nil, BuildInfo{}, nil, nil, fmt.Errorf("failed to start pipeline: %w", err)
 	}
 
 	// Submit analysis request
@@ -206,14 +206,14 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 	}
 	reqData, err := json.Marshal(req)
 	if err != nil {
-		return nil, nil, BuildInfo{}, nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, nil, BuildInfo{}, nil, nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 	msgBroker.Publish(ctx, contracts.TopicRequests, requestID, reqData)
 
 	// Collect findings, test results, and build metadata with timeout
 	cards, testResults, buildMeta, err := s.collectFromChannels(ctx, findingsCh, testsCh, metadataCh)
 	if err != nil {
-		return nil, nil, BuildInfo{}, nil, err
+		return nil, nil, BuildInfo{}, nil, nil, err
 	}
 
 	// Build info from authoritative metadata (fallback to card-based extraction)
@@ -225,7 +225,7 @@ func (s *Server) runAnalysis(ctx context.Context, buildURL string) ([]contracts.
 		testSummary = buildTestSummary(requestID, testResults)
 	}
 
-	return cards, testResults, buildInfo, testSummary, nil
+	return cards, testResults, buildInfo, buildMeta, testSummary, nil
 }
 
 // collectFromChannels collects findings, test results, and build metadata from pre-subscribed channels until timeout.
@@ -351,10 +351,10 @@ func generateRequestID() string {
 	return fmt.Sprintf("req-%s-%s", timestamp, hex.EncodeToString(randomBytes))
 }
 
-// recordBuildData records test results and findings to SQLite for flaky/novelty detection.
+// recordBuildData records build metadata, test results, and findings to SQLite for flaky/novelty detection.
 // This is best-effort; errors don't fail the request.
-func (s *Server) recordBuildData(ctx context.Context, buildInfo BuildInfo, testResults []contracts.TestResult, cards []contracts.TriageCard) {
-	if len(cards) == 0 && len(testResults) == 0 {
+func (s *Server) recordBuildData(ctx context.Context, buildInfo BuildInfo, buildMeta *contracts.BuildMetadata, testResults []contracts.TestResult, cards []contracts.TriageCard) {
+	if len(cards) == 0 && len(testResults) == 0 && buildMeta == nil {
 		return
 	}
 	if buildInfo.Number == "" {
@@ -385,7 +385,7 @@ func (s *Server) recordBuildData(ctx context.Context, buildInfo BuildInfo, testR
 	defer history.Close()
 
 	// Record all build data (best-effort, don't fail if it errors)
-	_ = history.RecordBuildData(ctx, pipelineID, buildNumber, testResults, cards)
+	_ = history.RecordBuildData(ctx, pipelineID, buildNumber, buildMeta, testResults, cards)
 }
 
 // loadNoveltyMap loads the novelty map for finding classification.

@@ -342,8 +342,25 @@ func StartWithBroker(brk broker.Broker, initialCards []contracts.TriageCard) err
 type AnalysisResult struct {
 	Cards       []contracts.TriageCard
 	TestResults []contracts.TestResult
-	PipelineID  string
-	BuildNumber int
+	Metadata    *contracts.BuildMetadata
+}
+
+// PipelineID returns the pipeline identifier derived from build metadata.
+// Returns empty string if metadata is not available.
+func (r *AnalysisResult) PipelineID() string {
+	if r.Metadata != nil && r.Metadata.URL != "" {
+		return extractPipelineID(r.Metadata.URL)
+	}
+	return ""
+}
+
+// BuildNumber returns the build number derived from build metadata.
+// Returns 0 if metadata is not available.
+func (r *AnalysisResult) BuildNumber() int {
+	if r.Metadata != nil && r.Metadata.URL != "" {
+		return extractBuildNumberInt(r.Metadata.URL)
+	}
+	return 0
 }
 
 // StartWithChannels initializes the TUI with pre-subscribed broker channels.
@@ -453,15 +470,7 @@ func StartWithChannels(channels *BrokerChannels, initialCards []contracts.Triage
 			result.Cards = append(result.Cards, item.Card)
 		}
 		result.TestResults = m.testResults
-
-		// Extract pipeline ID and build number from metadata or first card
-		if m.buildMetadata != nil {
-			result.PipelineID = extractPipelineID(m.buildMetadata.URL)
-			result.BuildNumber = extractBuildNumberInt(m.buildMetadata.URL)
-		} else if len(result.Cards) > 0 {
-			result.PipelineID = extractPipelineID(result.Cards[0].BuildURL)
-			result.BuildNumber = extractBuildNumberInt(result.Cards[0].BuildURL)
-		}
+		result.Metadata = m.buildMetadata
 	}
 
 	return result, nil

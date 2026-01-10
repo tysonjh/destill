@@ -119,6 +119,24 @@ func (th *TestHistory) migrate() error {
 		ON finding_history(pipeline_id, message_hash);
 	CREATE INDEX IF NOT EXISTS idx_finding_pipeline_build
 		ON finding_history(pipeline_id, build_number DESC);
+
+	CREATE TABLE IF NOT EXISTS builds (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		pipeline_id TEXT NOT NULL,
+		build_number INTEGER NOT NULL,
+		commit_sha TEXT,
+		branch TEXT,
+		state TEXT,
+		source TEXT,
+		message TEXT,
+		started_at TEXT,
+		finished_at TEXT,
+		duration TEXT,
+		build_url TEXT,
+		created_at TEXT NOT NULL,
+		UNIQUE(pipeline_id, build_number)
+	);
+	CREATE INDEX IF NOT EXISTS idx_builds_commit ON builds(pipeline_id, commit_sha);
 	`
 	if _, err := th.db.Exec(schema); err != nil {
 		return err
@@ -129,12 +147,19 @@ func (th *TestHistory) migrate() error {
 	return nil
 }
 
-// RecordBuildData stores both test results and findings for a build.
+// RecordBuildData stores build metadata, test results, and findings for a build.
 // This is the unified entry point for persisting build analysis data.
-// Either testResults or cards can be nil if not available.
-func (th *TestHistory) RecordBuildData(ctx context.Context, pipelineID string, buildNumber int, testResults []contracts.TestResult, cards []contracts.TriageCard) error {
+// All parameters except pipelineID and buildNumber are optional.
+func (th *TestHistory) RecordBuildData(ctx context.Context, pipelineID string, buildNumber int, meta *contracts.BuildMetadata, testResults []contracts.TestResult, cards []contracts.TriageCard) error {
 	if pipelineID == "" || buildNumber == 0 {
 		return nil // Nothing to record without identifiers
+	}
+
+	// Record build metadata first (if provided)
+	if meta != nil {
+		if err := th.RecordBuild(ctx, pipelineID, buildNumber, meta); err != nil {
+			return fmt.Errorf("failed to record build metadata: %w", err)
+		}
 	}
 
 	// Record test results
@@ -162,6 +187,69 @@ func (th *TestHistory) RecordBuildData(ctx context.Context, pipelineID string, b
 	}
 
 	return nil
+}
+
+// RecordBuild stores build metadata. Uses INSERT OR REPLACE for idempotency.
+func (th *TestHistory) RecordBuild(ctx context.Context, pipelineID string, buildNumber int, meta *contracts.BuildMetadata) error {
+	query := `
+	INSERT OR REPLACE INTO builds
+		(pipeline_id, build_number, commit_sha, branch, state, source, message, started_at, finished_at, duration, build_url, created_at)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := th.db.ExecContext(ctx, query,
+		pipelineID,
+		buildNumber,
+		meta.Commit,
+		meta.Branch,
+		meta.State,
+		meta.Source,
+		meta.Message,
+		meta.StartedAt,
+		meta.FinishedAt,
+		meta.Duration,
+		meta.URL,
+		time.Now().UTC().Format(time.RFC3339),
+	)
+	return err
+}
+
+// GetBuild retrieves build metadata for a specific build.
+// Returns the canonical BuildMetadata type. The Number field contains the
+// build number as a string (matching the original metadata format).
+func (th *TestHistory) GetBuild(ctx context.Context, pipelineID string, buildNumber int) (*contracts.BuildMetadata, error) {
+	query := `
+	SELECT commit_sha, branch, state, source, message,
+	       started_at, finished_at, duration, build_url, created_at
+	FROM builds
+	WHERE pipeline_id = ? AND build_number = ?
+	`
+	var commit, branch, state, source, message, startedAt, finishedAt, duration, url sql.NullString
+	var createdAtStr string
+
+	err := th.db.QueryRowContext(ctx, query, pipelineID, buildNumber).Scan(
+		&commit, &branch, &state, &source,
+		&message, &startedAt, &finishedAt, &duration, &url, &createdAtStr,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil // Not found, return nil without error
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get build: %w", err)
+	}
+
+	return &contracts.BuildMetadata{
+		URL:        url.String,
+		Number:     fmt.Sprintf("%d", buildNumber),
+		State:      state.String,
+		Branch:     branch.String,
+		Commit:     commit.String,
+		Message:    message.String,
+		Source:     source.String,
+		StartedAt:  startedAt.String,
+		FinishedAt: finishedAt.String,
+		Duration:   duration.String,
+		Timestamp:  createdAtStr,
+	}, nil
 }
 
 // RecordResult stores a test result. Uses INSERT OR REPLACE to handle duplicates.
