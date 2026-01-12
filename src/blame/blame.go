@@ -149,6 +149,73 @@ func extractFileRefs(cards []contracts.TriageCard) []FileRef {
 	return refs
 }
 
+// stopwords contains common words that should not contribute to blame correlation.
+// These appear frequently in code and error messages but don't indicate causation.
+var stopwords = map[string]bool{
+	// Common English words
+	"a": true, "an": true, "the": true, "is": true, "in": true, "on": true,
+	"to": true, "for": true, "of": true, "with": true, "by": true, "at": true,
+	"from": true, "as": true, "or": true, "and": true, "not": true, "no": true,
+	"be": true, "was": true, "has": true, "have": true, "had": true, "can": true,
+	"its": true, "it": true, "this": true, "that": true, "if": true, "else": true,
+	"then": true, "when": true, "should": true, "only": true, "use": true,
+	"non": true, "pre": true, "end": true, "last": true, "time": true,
+	"properly": true, "In": true, "SQL": true, "DB": true,
+
+	// Generic programming terms
+	"class": true, "function": true, "func": true, "Func": true, "method": true,
+	"package": true, "object": true, "module": true, "import": true,
+	"test": true, "tests": true, "type": true, "types": true, "value": true,
+	"error": true, "Error": true, "exception": true, "Exception": true,
+	"case": true, "default": true, "return": true, "void": true,
+	"public": true, "private": true, "static": true, "final": true,
+	"true": true, "false": true, "null": true, "nil": true, "None": true,
+	"struct": true, "interface": true, "enum": true, "const": true, "var": true,
+
+	// Common single-letter identifiers (a-z handled by len check in isStopword)
+	"fn": true, "op": true, "id": true, "ok": true, "err": true,
+
+	// Common method/function names
+	"get": true, "set": true, "put": true, "pop": true, "push": true,
+	"add": true, "remove": true, "delete": true, "create": true, "new": true,
+	"init": true, "initialize": true, "setup": true, "teardown": true,
+	"run": true, "start": true, "stop": true, "close": true, "open": true,
+	"read": true, "write": true, "load": true, "save": true, "update": true,
+	"map": true, "filter": true, "reduce": true, "foreach": true,
+	"apply": true, "call": true, "invoke": true, "execute": true,
+	"assert": true, "expect": true, "require": true, "check": true,
+	"log": true, "print": true, "debug": true, "info": true, "warn": true,
+	"input": true, "output": true, "result": true, "results": true,
+	"data": true, "config": true, "options": true, "params": true,
+	"empty": true, "length": true, "size": true, "count": true, "number": true,
+	"min": true, "max": true, "sum": true, "avg": true,
+	"exists": true, "contains": true, "includes": true,
+	"join": true, "split": true, "concat": true, "append": true,
+	"build": true, "make": true, "copy": true, "clone": true,
+	"getOrElse": true, "orElse": true,
+
+	// Common type names
+	"String": true, "Int": true, "Integer": true, "Long": true, "Float": true,
+	"Double": true, "Boolean": true, "Bool": true, "Array": true, "List": true,
+	"Seq": true, "Set": true, "Dict": true, "Map": true, "Object": true,
+	"Some": true, "Option": true, "Optional": true, "Result": true,
+	"StructType": true, "Table": true,
+
+	// Common framework/library terms
+	"org": true, "com": true, "io": true, "net": true, "java": true,
+	"scala": true, "python": true, "spark": true, "sql": true,
+	"schema": true, "row": true, "column": true, "field": true,
+	"batch": true, "batches": true, "stream": true, "operator": true,
+	"offset": true, "version": true, "retry": true, "resolve": true,
+	"code": true, "directories": true, "keys": true, "Checkpoint": true,
+	"super": true, "Eq": true, "assertEqual": true,
+}
+
+// isStopword returns true if the given identifier should be ignored in correlation.
+func isStopword(s string) bool {
+	return stopwords[s] || len(s) <= 2
+}
+
 // Common patterns for extracting file references from stack traces and error messages.
 var fileRefPatterns = []*regexp.Regexp{
 	// Python: File "path/to/file.py", line 123
@@ -247,8 +314,8 @@ func matchFileRef(cf githubactions.CommitFile, ref FileRef) (float64, string) {
 		return score, evidence
 	}
 
-	// Function name in patch
-	if ref.Function != "" && cf.Patch != "" {
+	// Function name in patch (skip stopwords)
+	if ref.Function != "" && cf.Patch != "" && !isStopword(ref.Function) {
 		if strings.Contains(cf.Patch, ref.Function) {
 			score = 0.5
 			evidence = "function '" + ref.Function + "' found in diff"
