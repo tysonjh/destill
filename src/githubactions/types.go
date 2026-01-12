@@ -58,3 +58,28 @@ type ArtifactsResponse struct {
 	TotalCount int        `json:"total_count"`
 	Artifacts  []Artifact `json:"artifacts"`
 }
+
+// Commit represents a GitHub commit with file changes
+type Commit struct {
+	SHA     string       `json:"sha"`
+	Message string       `json:"message"`
+	Author  CommitAuthor `json:"author"`
+	Files   []CommitFile `json:"files"`
+}
+
+// CommitAuthor represents the author of a commit
+type CommitAuthor struct {
+	Name  string    `json:"name"`
+	Email string    `json:"email"`
+	Date  time.Time `json:"date"`
+}
+
+// CommitFile represents a file changed in a commit
+type CommitFile struct {
+	Filename  string `json:"filename"`
+	Status    string `json:"status"` // added, removed, modified, renamed
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Changes   int    `json:"changes"`
+	Patch     string `json:"patch,omitempty"` // The actual diff content
+}

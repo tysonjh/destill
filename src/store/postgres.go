@@ -127,6 +127,30 @@ func (s *PostgresStore) GetLatestRequestByBuildURL(ctx context.Context, buildURL
 	return requestID, nil
 }
 
+// GetByHash retrieves a single finding by message hash.
+// TODO: Implement when Postgres schema supports message_hash lookup.
+func (s *PostgresStore) GetByHash(ctx context.Context, requestID, messageHash string) (contracts.TriageCard, error) {
+	return contracts.TriageCard{}, fmt.Errorf("GetByHash not implemented for PostgresStore")
+}
+
+// Store saves findings for a request.
+// TODO: Implement when Postgres schema supports write operations from MCP.
+func (s *PostgresStore) Store(ctx context.Context, requestID string, cards []contracts.TriageCard) error {
+	return fmt.Errorf("Store not implemented for PostgresStore")
+}
+
+// StoreBuildMeta saves build metadata for a request.
+// TODO: Implement when Postgres schema supports build metadata.
+func (s *PostgresStore) StoreBuildMeta(ctx context.Context, requestID string, meta *contracts.BuildMetadata) error {
+	return fmt.Errorf("StoreBuildMeta not implemented for PostgresStore")
+}
+
+// GetBuildMeta retrieves build metadata for a request.
+// TODO: Implement when Postgres schema supports build metadata.
+func (s *PostgresStore) GetBuildMeta(ctx context.Context, requestID string) (*contracts.BuildMetadata, error) {
+	return nil, fmt.Errorf("GetBuildMeta not implemented for PostgresStore")
+}
+
 // Close closes the database connection.
 func (s *PostgresStore) Close() error {
 	return s.db.Close()

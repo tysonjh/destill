@@ -11,16 +11,18 @@ import (
 // InMemoryStore is a thread-safe in-memory implementation of Store.
 // Used for local mode and MCP server.
 type InMemoryStore struct {
-	mu       sync.RWMutex
-	requests map[string][]contracts.TriageCard         // request_id -> cards
-	byHash   map[string]map[string]contracts.TriageCard // request_id -> message_hash -> card
+	mu         sync.RWMutex
+	requests   map[string][]contracts.TriageCard          // request_id -> cards
+	byHash     map[string]map[string]contracts.TriageCard // request_id -> message_hash -> card
+	buildMetas map[string]*contracts.BuildMetadata        // request_id -> build metadata
 }
 
 // NewInMemoryStore creates a new in-memory store.
 func NewInMemoryStore() *InMemoryStore {
 	return &InMemoryStore{
-		requests: make(map[string][]contracts.TriageCard),
-		byHash:   make(map[string]map[string]contracts.TriageCard),
+		requests:   make(map[string][]contracts.TriageCard),
+		byHash:     make(map[string]map[string]contracts.TriageCard),
+		buildMetas: make(map[string]*contracts.BuildMetadata),
 	}
 }
 
@@ -69,6 +71,27 @@ func (s *InMemoryStore) GetByHash(ctx context.Context, requestID, messageHash st
 	}
 
 	return card, nil
+}
+
+// StoreBuildMeta saves build metadata for a request.
+func (s *InMemoryStore) StoreBuildMeta(ctx context.Context, requestID string, meta *contracts.BuildMetadata) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.buildMetas[requestID] = meta
+	return nil
+}
+
+// GetBuildMeta retrieves build metadata for a request.
+func (s *InMemoryStore) GetBuildMeta(ctx context.Context, requestID string) (*contracts.BuildMetadata, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	meta, ok := s.buildMetas[requestID]
+	if !ok {
+		return nil, ErrNotFound{RequestID: requestID}
+	}
+	return meta, nil
 }
 
 // Close is a no-op for in-memory store.

@@ -23,6 +23,12 @@ type Store interface {
 	// Store saves findings for a request.
 	Store(ctx context.Context, requestID string, cards []contracts.TriageCard) error
 
+	// StoreBuildMeta saves build metadata for a request.
+	StoreBuildMeta(ctx context.Context, requestID string, meta *contracts.BuildMetadata) error
+
+	// GetBuildMeta retrieves build metadata for a request.
+	GetBuildMeta(ctx context.Context, requestID string) (*contracts.BuildMetadata, error)
+
 	// Close closes the store connection.
 	Close() error
 }

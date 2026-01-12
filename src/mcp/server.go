@@ -7,14 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"destill-agent/src/blame"
 	"destill-agent/src/broker"
 	"destill-agent/src/contracts"
+	"destill-agent/src/githubactions"
 	"destill-agent/src/pipeline"
 	"destill-agent/src/provider"
 	"destill-agent/src/store"
@@ -68,8 +71,17 @@ func (s *Server) registerTools() {
 		),
 	)
 
+	blameTool := mcp.NewTool("get_likely_cause",
+		mcp.WithDescription("Identify which code changes likely caused build failures. Cross-references the commit diff with stack traces and error messages in findings to surface the most likely culprits."),
+		mcp.WithString("request_id",
+			mcp.Required(),
+			mcp.Description("Request ID from analyze_build response"),
+		),
+	)
+
 	s.mcpServer.AddTool(analyzeTool, s.handleAnalyzeBuild)
 	s.mcpServer.AddTool(detailsTool, s.handleGetFindingDetails)
+	s.mcpServer.AddTool(blameTool, s.handleGetLikelyCause)
 }
 
 // Run starts the MCP server on stdio.
@@ -103,6 +115,14 @@ func (s *Server) handleAnalyzeBuild(ctx context.Context, request mcp.CallToolReq
 	// Store raw cards for drill-down
 	if err := s.store.Store(ctx, requestID, cards); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to store findings: %v", err)), nil
+	}
+
+	// Store build metadata for blame correlation
+	if buildMeta != nil {
+		buildMeta.RequestID = requestID
+		if err := s.store.StoreBuildMeta(ctx, requestID, buildMeta); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to store build metadata: %v", err)), nil
+		}
 	}
 
 	// Record to SQLite history for novelty/flaky detection (best-effort)
@@ -497,4 +517,97 @@ func buildTestSummary(requestID string, results []contracts.TestResult) *contrac
 	}
 
 	return summary
+}
+
+// handleGetLikelyCause handles the get_likely_cause tool call.
+// Cross-references commit diffs with file references in findings to identify likely culprits.
+func (s *Server) handleGetLikelyCause(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	// Check local invariants first (fail fast)
+	requestID := request.GetString("request_id", "")
+	if requestID == "" {
+		return mcp.NewToolResultError("request_id parameter is required"), nil
+	}
+
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return mcp.NewToolResultError("GITHUB_TOKEN environment variable is required for blame correlation"), nil
+	}
+
+	// Retrieve build metadata
+	buildMeta, err := s.store.GetBuildMeta(ctx, requestID)
+	if err != nil {
+		var notFound store.ErrNotFound
+		if errors.As(err, &notFound) {
+			return mcp.NewToolResultError(fmt.Sprintf("build metadata not found for request_id=%s", requestID)), nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get build metadata: %v", err)), nil
+	}
+
+	// Validate we have commit info
+	if buildMeta.Commit == "" {
+		return mcp.NewToolResultError("no commit SHA available in build metadata"), nil
+	}
+
+	// Parse build URL to get owner/repo
+	ref, err := provider.ParseURL(buildMeta.URL)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to parse build URL: %v", err)), nil
+	}
+
+	// Handle different provider metadata keys
+	// GitHub uses "owner"/"repo", Buildkite uses "org"/"pipeline"
+	owner := ref.Metadata["owner"]
+	if owner == "" {
+		owner = ref.Metadata["org"]
+	}
+	repo := ref.Metadata["repo"]
+	if repo == "" {
+		repo = ref.Metadata["pipeline"]
+	}
+	if owner == "" || repo == "" {
+		return mcp.NewToolResultError("could not extract owner/repo from build URL"), nil
+	}
+
+	// Retrieve findings for correlation
+	cards, err := s.store.GetFindings(ctx, requestID)
+	if err != nil {
+		var notFound store.ErrNotFound
+		if errors.As(err, &notFound) {
+			return mcp.NewToolResultError(fmt.Sprintf("findings not found for request_id=%s", requestID)), nil
+		}
+		return mcp.NewToolResultError(fmt.Sprintf("failed to get findings: %v", err)), nil
+	}
+
+	if len(cards) == 0 {
+		return mcp.NewToolResultError("no findings available for blame correlation"), nil
+	}
+
+	// Create GitHub client and fetch commit details
+	ghClient := githubactions.NewClient(token)
+	commit, err := ghClient.GetCommit(ctx, owner, repo, buildMeta.Commit)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to fetch commit details: %v", err)), nil
+	}
+
+	// Run blame correlation
+	result := blame.Correlate(commit, cards, owner, repo)
+
+	// Build response
+	response := BlameResponse{
+		RequestID: requestID,
+		Build: BlameBuildInfo{
+			URL:    buildMeta.URL,
+			Number: buildMeta.Number,
+			Branch: buildMeta.Branch,
+			Commit: buildMeta.Commit,
+		},
+		Analysis: result,
+	}
+
+	jsonBytes, err := json.Marshal(response)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to marshal response: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonBytes)), nil
 }

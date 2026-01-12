@@ -1,7 +1,10 @@
 // Package mcp provides the MCP server implementation for LLM-optimized build analysis.
 package mcp
 
-import "destill-agent/src/contracts"
+import (
+	"destill-agent/src/blame"
+	"destill-agent/src/contracts"
+)
 
 // MaxTestExamples is the maximum number of test name examples to include.
 const MaxTestExamples = 3
@@ -91,4 +94,19 @@ func ExtractRequestID(cards []contracts.TriageCard) string {
 		return cards[0].RequestID
 	}
 	return ""
+}
+
+// BlameResponse is the response from get_likely_cause.
+type BlameResponse struct {
+	RequestID string          `json:"request_id"`
+	Build     BlameBuildInfo  `json:"build"`
+	Analysis  *blame.Result   `json:"analysis"`
+}
+
+// BlameBuildInfo contains minimal build info for blame context.
+type BlameBuildInfo struct {
+	URL    string `json:"url"`
+	Number string `json:"number,omitempty"`
+	Branch string `json:"branch,omitempty"`
+	Commit string `json:"commit"`
 }

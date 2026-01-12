@@ -261,3 +261,48 @@ func (c *Client) DownloadArtifact(ctx context.Context, downloadURL string) (map[
 
 	return files, nil
 }
+
+// GetCommit fetches a commit with its changed files
+func (c *Client) GetCommit(ctx context.Context, owner, repo, sha string) (*Commit, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/commits/%s", c.baseURL, owner, repo, sha)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API error %d: %s", resp.StatusCode, string(body))
+	}
+
+	// GitHub returns commit info nested under "commit" for message/author
+	var apiResp struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Message string       `json:"message"`
+			Author  CommitAuthor `json:"author"`
+		} `json:"commit"`
+		Files []CommitFile `json:"files"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, err
+	}
+
+	return &Commit{
+		SHA:     apiResp.SHA,
+		Message: apiResp.Commit.Message,
+		Author:  apiResp.Commit.Author,
+		Files:   apiResp.Files,
+	}, nil
+}
