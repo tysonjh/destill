@@ -233,18 +233,20 @@ func (a *Agent) publishBuildMetadata(ctx context.Context, requestID string, buil
 	}
 
 	metadata := contracts.BuildMetadata{
-		RequestID:  requestID,
-		URL:        build.URL,
-		Number:     build.Number,
-		State:      build.State,
-		Branch:     build.Branch,
-		Commit:     build.Commit,
-		Message:    build.Message,
-		Source:     build.Source,
-		StartedAt:  startedAt,
-		FinishedAt: finishedAt,
-		Duration:   duration,
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		RequestID:   requestID,
+		URL:         build.URL,
+		Number:      build.Number,
+		State:       build.State,
+		Branch:      build.Branch,
+		Commit:      build.Commit,
+		Message:     build.Message,
+		Source:      build.Source,
+		StartedAt:   startedAt,
+		FinishedAt:  finishedAt,
+		Duration:    duration,
+		Timestamp:   time.Now().UTC().Format(time.RFC3339),
+		GitHubOwner: build.GitHubOwner,
+		GitHubRepo:  build.GitHubRepo,
 	}
 
 	data, err := json.Marshal(metadata)

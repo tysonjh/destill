@@ -136,18 +136,20 @@ func DeduplicateCards(cards []TriageCard) []TriageCard {
 // Published to: destill.build.metadata
 // Key: {request_id}
 type BuildMetadata struct {
-	RequestID  string `json:"request_id"`
-	URL        string `json:"url"`
-	Number     string `json:"number"`
-	State      string `json:"state"`  // passed, failed, canceled, running
-	Branch     string `json:"branch"`
-	Commit     string `json:"commit"` // Git SHA
-	Message    string `json:"message,omitempty"`
-	Source     string `json:"source"` // webhook, api, schedule, ui
-	StartedAt  string `json:"started_at,omitempty"`
-	FinishedAt string `json:"finished_at,omitempty"`
-	Duration   string `json:"duration,omitempty"` // Human-readable duration
-	Timestamp  string `json:"timestamp"`
+	RequestID   string `json:"request_id"`
+	URL         string `json:"url"`
+	Number      string `json:"number"`
+	State       string `json:"state"`  // passed, failed, canceled, running
+	Branch      string `json:"branch"`
+	Commit      string `json:"commit"` // Git SHA
+	Message     string `json:"message,omitempty"`
+	Source      string `json:"source"` // webhook, api, schedule, ui
+	StartedAt   string `json:"started_at,omitempty"`
+	FinishedAt  string `json:"finished_at,omitempty"`
+	Duration    string `json:"duration,omitempty"` // Human-readable duration
+	Timestamp   string `json:"timestamp"`
+	GitHubOwner string `json:"github_owner,omitempty"` // GitHub repository owner (for Buildkite builds)
+	GitHubRepo  string `json:"github_repo,omitempty"`  // GitHub repository name (for Buildkite builds)
 }
 
 // TopicNames defines the Redpanda topic names used in the distributed architecture

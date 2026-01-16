@@ -25,6 +25,12 @@ type Client struct {
 	httpClient *http.Client
 }
 
+// Pipeline represents a Buildkite pipeline with repository info.
+type Pipeline struct {
+	Slug       string `json:"slug"`
+	Repository string `json:"repository"` // e.g., "git@github.com:redpanda-data/redpanda.git"
+}
+
 // Build represents a Buildkite build.
 type Build struct {
 	ID         string    `json:"id"`
@@ -39,6 +45,7 @@ type Build struct {
 	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 	Jobs       []Job     `json:"jobs"`
+	Pipeline   Pipeline  `json:"pipeline"`
 }
 
 // Job represents a Buildkite job within a build.
@@ -71,6 +78,29 @@ func NewClient(apiToken string) *Client {
 			Timeout: 30 * time.Second,
 		},
 	}
+}
+
+// ParseGitHubRepo extracts owner and repo from a GitHub repository URL.
+// Supports formats:
+//   - git@github.com:owner/repo.git
+//   - https://github.com/owner/repo.git
+//   - https://github.com/owner/repo
+//
+// Returns empty strings if the URL is not a GitHub repository.
+func ParseGitHubRepo(repoURL string) (owner, repo string) {
+	// SSH format: git@github.com:owner/repo.git
+	sshPattern := regexp.MustCompile(`git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$`)
+	if matches := sshPattern.FindStringSubmatch(repoURL); len(matches) == 3 {
+		return matches[1], matches[2]
+	}
+
+	// HTTPS format: https://github.com/owner/repo.git or https://github.com/owner/repo
+	httpsPattern := regexp.MustCompile(`https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$`)
+	if matches := httpsPattern.FindStringSubmatch(repoURL); len(matches) == 3 {
+		return matches[1], matches[2]
+	}
+
+	return "", ""
 }
 
 // ParseBuildURL extracts the organization, pipeline, and build number from a Buildkite URL.

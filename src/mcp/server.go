@@ -548,24 +548,24 @@ func (s *Server) handleGetLikelyCause(ctx context.Context, request mcp.CallToolR
 		return mcp.NewToolResultError("no commit SHA available in build metadata"), nil
 	}
 
-	// Parse build URL to get owner/repo
-	ref, err := provider.ParseURL(buildMeta.URL)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to parse build URL: %v", err)), nil
-	}
+	// Get GitHub owner/repo - prefer stored values, fall back to URL parsing
+	owner := buildMeta.GitHubOwner
+	repo := buildMeta.GitHubRepo
 
-	// Handle different provider metadata keys
-	// GitHub uses "owner"/"repo", Buildkite uses "org"/"pipeline"
-	owner := ref.Metadata["owner"]
-	if owner == "" {
-		owner = ref.Metadata["org"]
-	}
-	repo := ref.Metadata["repo"]
-	if repo == "" {
-		repo = ref.Metadata["pipeline"]
-	}
 	if owner == "" || repo == "" {
-		return mcp.NewToolResultError("could not extract owner/repo from build URL"), nil
+		// Fall back to parsing from URL for GitHub Actions builds
+		ref, err := provider.ParseURL(buildMeta.URL)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to parse build URL: %v", err)), nil
+		}
+
+		// GitHub uses "owner"/"repo" in metadata
+		owner = ref.Metadata["owner"]
+		repo = ref.Metadata["repo"]
+
+		if owner == "" || repo == "" {
+			return mcp.NewToolResultError("could not extract owner/repo from build URL (for Buildkite builds, ensure pipeline has GitHub repository configured)"), nil
+		}
 	}
 
 	// Retrieve findings for correlation
