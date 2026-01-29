@@ -1,10 +1,13 @@
 package ingest
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +35,147 @@ func debugLog(format string, args ...interface{}) {
 	}
 	defer f.Close()
 	fmt.Fprintf(f, format+"", args...)
+}
+
+// logDownloadsEnabled returns true if DESTILL_DOWNLOAD_LOGS is set to true
+func logDownloadsEnabled() bool {
+	val := strings.ToLower(os.Getenv("DESTILL_DOWNLOAD_LOGS"))
+	return val == "true" || val == "1" || val == "yes"
+}
+
+// getMaxLogFileSize returns the max size per log file in bytes (default: 10MB)
+func getMaxLogFileSize() int64 {
+	val := os.Getenv("DESTILL_MAX_LOG_FILE_SIZE")
+	if val == "" {
+		return 10 * 1024 * 1024 // 10MB default
+	}
+	size, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return 10 * 1024 * 1024 // 10MB default on parse error
+	}
+	return size
+}
+
+// getMaxTotalLogSize returns the max total size for all logs in bytes (default: 50MB)
+func getMaxTotalLogSize() int64 {
+	val := os.Getenv("DESTILL_MAX_TOTAL_LOG_SIZE")
+	if val == "" {
+		return 50 * 1024 * 1024 // 50MB default
+	}
+	size, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return 50 * 1024 * 1024 // 50MB default on parse error
+	}
+	return size
+}
+
+// isLogFile checks if a filename is a log file (.log or .log.gz)
+func isLogFile(filename string) bool {
+	lower := strings.ToLower(filename)
+	return strings.HasSuffix(lower, ".log") || strings.HasSuffix(lower, ".log.gz")
+}
+
+// extractFailedTestNames extracts test names from failed test results
+func extractFailedTestNames(results []ParsedTestResult) []string {
+	var failed []string
+	for _, result := range results {
+		if !result.Passed {
+			// Collect various name forms to improve matching
+			if result.TestName != "" {
+				failed = append(failed, result.TestName)
+			}
+			if result.Name != "" {
+				failed = append(failed, result.Name)
+			}
+			if result.ClassName != "" {
+				failed = append(failed, result.ClassName)
+			}
+		}
+	}
+	return failed
+}
+
+// matchesFailedTest checks if an artifact path matches any failed test name
+func matchesFailedTest(artifactPath string, failedTests []string) bool {
+	lowerPath := strings.ToLower(artifactPath)
+	for _, testName := range failedTests {
+		lowerTest := strings.ToLower(testName)
+		// Extract test base name (remove package/class prefixes)
+		parts := strings.Split(lowerTest, ".")
+		baseName := parts[len(parts)-1]
+
+		// Check if path contains the test name or base name
+		if strings.Contains(lowerPath, lowerTest) || strings.Contains(lowerPath, baseName) {
+			return true
+		}
+	}
+	return false
+}
+
+// getArtifactCacheDir returns the cache directory for artifacts
+func getArtifactCacheDir(requestID string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	cacheDir := filepath.Join(homeDir, ".destill", "cache", requestID, "artifacts")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create cache directory: %w", err)
+	}
+	return cacheDir, nil
+}
+
+// saveLogFile saves a log file to the local cache and returns the decompressed content
+func saveLogFile(data []byte, artifactPath, requestID string) ([]byte, error) {
+	cacheDir, err := getArtifactCacheDir(requestID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Clean the artifact path to create a safe filename
+	filename := filepath.Base(artifactPath)
+	filepath := filepath.Join(cacheDir, filename)
+
+	// Save the original file
+	if err := os.WriteFile(filepath, data, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write file: %w", err)
+	}
+
+	// If it's gzipped, decompress and save decompressed version
+	if strings.HasSuffix(strings.ToLower(artifactPath), ".gz") {
+		decompressed, err := decompressGzip(data)
+		if err != nil {
+			// Return original data if decompression fails
+			return data, nil
+		}
+
+		// Save decompressed version
+		decompressedPath := strings.TrimSuffix(filepath, ".gz")
+		if err := os.WriteFile(decompressedPath, decompressed, 0644); err != nil {
+			// Non-fatal, just return decompressed data
+			return decompressed, nil
+		}
+
+		return decompressed, nil
+	}
+
+	return data, nil
+}
+
+// decompressGzip decompresses gzip data
+func decompressGzip(data []byte) ([]byte, error) {
+	reader, err := gzip.NewReader(strings.NewReader(string(data)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer reader.Close()
+
+	decompressed, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decompress: %w", err)
+	}
+
+	return decompressed, nil
 }
 
 // ArtifactAgent fetches and processes JUnit XML artifacts from builds.
@@ -323,12 +467,153 @@ func (a *ArtifactAgent) processJobArtifacts(
 		}
 	}
 
+	// Second pass: Process log files if enabled
+	if logDownloadsEnabled() {
+		failedTests := extractFailedTestNames(allResults)
+
+		// If no XML test results but job failed, download logs opportunistically
+		if len(failedTests) == 0 && len(allResults) == 0 && job.ExitCode != 0 {
+			a.logger.Info("[ArtifactAgent] Job %s failed with no XML results, downloading log files opportunistically", job.Name)
+			if debugArtifacts() {
+				debugLog("Job %s failed (exit %d) with no XML, downloading all log files", job.Name, job.ExitCode)
+			}
+			// Empty failedTests list means processLogArtifacts will download all log files (with size limits)
+			logCount, bytesDownloaded := a.processLogArtifacts(ctx, prov, artifacts, nil, requestID, job.Name, buildURL)
+			if logCount > 0 {
+				a.logger.Info("[ArtifactAgent] Downloaded %d log files (%d bytes) for job %s", logCount, bytesDownloaded, job.Name)
+			}
+		} else if len(failedTests) > 0 {
+			a.logger.Info("[ArtifactAgent] Found %d failed tests, checking for log files", len(failedTests))
+			if debugArtifacts() {
+				debugLog("Failed tests: %v", failedTests)
+			}
+
+			logCount, bytesDownloaded := a.processLogArtifacts(ctx, prov, artifacts, failedTests, requestID, job.Name, buildURL)
+			if logCount > 0 {
+				a.logger.Info("[ArtifactAgent] Downloaded %d log files (%d bytes) for job %s", logCount, bytesDownloaded, job.Name)
+			}
+		}
+	}
+
 	if debugArtifacts() {
 		debugLog("Job %s summary: %d XML files found, %d test results parsed\n",
 			job.Name, xmlCount, len(allResults))
 	}
 
 	return allResults, hasAuthFailure, nil
+}
+
+// processLogArtifacts downloads and processes log files for failed tests.
+// Returns count of logs downloaded and total bytes.
+func (a *ArtifactAgent) processLogArtifacts(
+	ctx context.Context,
+	prov provider.Provider,
+	artifacts []provider.Artifact,
+	failedTests []string,
+	requestID, jobName, buildURL string,
+) (int, int64) {
+	maxFileSize := getMaxLogFileSize()
+	maxTotalSize := getMaxTotalLogSize()
+
+	var totalBytes int64
+	logCount := 0
+
+	for _, artifact := range artifacts {
+		// Check if this is a log file
+		if !isLogFile(artifact.Path) {
+			continue
+		}
+
+		// Check if it matches a failed test (skip if failedTests provided but no match)
+		// If failedTests is nil/empty, download all log files (opportunistic mode)
+		if failedTests != nil && len(failedTests) > 0 && !matchesFailedTest(artifact.Path, failedTests) {
+			if debugArtifacts() {
+				debugLog("Skipping log file (no match): %s", artifact.Path)
+			}
+			continue
+		}
+
+		// Check file size limit
+		if artifact.FileSize > maxFileSize {
+			a.logger.Debug("[ArtifactAgent] Skipping large log file %s (%d bytes > %d limit)",
+				artifact.Path, artifact.FileSize, maxFileSize)
+			continue
+		}
+
+		// Check total size limit
+		if totalBytes+artifact.FileSize > maxTotalSize {
+			a.logger.Info("[ArtifactAgent] Reached total log size limit (%d bytes), skipping remaining logs", maxTotalSize)
+			break
+		}
+
+		if debugArtifacts() {
+			debugLog("Downloading log file: %s (%d bytes)", artifact.Path, artifact.FileSize)
+		}
+		a.logger.Debug("[ArtifactAgent] Downloading log file: %s", artifact.Path)
+
+		// Download the log file
+		data, err := prov.DownloadArtifact(ctx, artifact)
+		if err != nil {
+			a.logger.Debug("[ArtifactAgent] Failed to download log %s: %v", artifact.Path, err)
+			continue
+		}
+
+		// Save locally and get decompressed content
+		decompressed, err := saveLogFile(data, artifact.Path, requestID)
+		if err != nil {
+			a.logger.Error("[ArtifactAgent] Failed to save log file %s: %v", artifact.Path, err)
+			// Continue with analysis even if save failed
+			decompressed = data
+		}
+
+		// Analyze the log content and publish findings
+		a.analyzeAndPublishLog(ctx, decompressed, artifact.Path, requestID, jobName, buildURL)
+
+		totalBytes += artifact.FileSize
+		logCount++
+
+		if debugArtifacts() {
+			debugLog("Successfully processed log file: %s", artifact.Path)
+		}
+	}
+
+	return logCount, totalBytes
+}
+
+// analyzeAndPublishLog analyzes log content and publishes findings to the broker.
+func (a *ArtifactAgent) analyzeAndPublishLog(
+	ctx context.Context,
+	content []byte,
+	artifactPath, requestID, jobName, buildURL string,
+) {
+	// Import the analyze package at the top if not already imported
+	// For now, we'll just publish the log content as a log chunk
+	// The analyze agent will pick it up and process it
+
+	// Split content into manageable chunks (similar to how job logs are chunked)
+	logContent := string(content)
+	chunks := ChunkLog(logContent, requestID, "artifact-"+artifactPath, jobName, artifactPath, map[string]string{
+		"build_url":     buildURL,
+		"artifact_path": artifactPath,
+		"source":        "artifact_log",
+	})
+
+	// Publish each chunk to the logs topic for analysis
+	for _, chunk := range chunks {
+		data, err := json.Marshal(chunk)
+		if err != nil {
+			a.logger.Error("[ArtifactAgent] Failed to marshal log chunk: %v", err)
+			continue
+		}
+
+		if err := a.broker.Publish(ctx, contracts.TopicLogsRaw, requestID, data); err != nil {
+			a.logger.Error("[ArtifactAgent] Failed to publish log chunk: %v", err)
+		}
+	}
+
+	if len(chunks) > 0 {
+		a.logger.Debug("[ArtifactAgent] Published %d chunks from artifact log %s", len(chunks), artifactPath)
+	}
 }
 
 // extractPipelineID extracts a pipeline identifier from the build reference.

@@ -85,6 +85,19 @@ Use `--json` for machine-readable output.
 | `GITHUB_TOKEN` | GitHub PAT with `repo` scope |
 | `ARTIFACT_SERVER_USER` | Username for custom artifact servers requiring Basic auth |
 | `ARTIFACT_SERVER_PASSWORD` | Password for custom artifact servers requiring Basic auth |
+| `DESTILL_DOWNLOAD_LOGS` | Enable downloading artifact log files (`true`/`false`, default: `false`) |
+| `DESTILL_MAX_LOG_FILE_SIZE` | Max size per log file in bytes (default: 10485760 = 10MB) |
+| `DESTILL_MAX_TOTAL_LOG_SIZE` | Max total size for all log files in bytes (default: 52428800 = 50MB) |
+| `DESTILL_DEBUG_ARTIFACTS` | Enable debug logging to `/tmp/destill-debug.log` |
+
+### Artifact Log Downloads
+
+When `DESTILL_DOWNLOAD_LOGS=true`, destill will:
+- Download log files (`.log` and `.log.gz`) from artifacts that match failed test names
+- Decompress gzipped logs automatically
+- Save both original and decompressed files to `~/.destill/cache/<request-id>/artifacts/`
+- Analyze log content using the same pattern-based analysis as job logs
+- Apply size limits to prevent excessive downloads
 
 ## Development
 
