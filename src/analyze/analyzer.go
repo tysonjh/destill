@@ -76,6 +76,18 @@ var (
 	// Assertion failures
 	assertionError = regexp.MustCompile(`(?i)(assertion failed|AssertionError|assert.*failed|ASSERT)`)
 
+	// Test framework assertions and failures
+	gtestFailure    = regexp.MustCompile(`(?i)^[^:]+\.(cc|cpp|h|hpp):\d+:\s*(Failure|Error)`)    // Google Test: file.cc:123: Failure
+	gtestExpected   = regexp.MustCompile(`(?i)^\s*(Expected|Actual|Value of):`)                  // Google Test assertion details
+	junitFailure    = regexp.MustCompile(`(?i)<(failure|error)\s+(message|type)=`)               // JUnit XML
+	pytestFailure   = regexp.MustCompile(`(?i)^(FAILED|ERROR)\s+.*test_`)                        // pytest
+	goTestFailure   = regexp.MustCompile(`^\s*--- FAIL:`)                                        // Go test
+	rustTestFailure = regexp.MustCompile(`^test\s+\S+\s+\.\.\.\s+FAILED`)                        // Rust test
+	jestFailure     = regexp.MustCompile(`(?i)^\s*●.*test|^\s*FAIL\s+`)                          // Jest (JavaScript)
+
+	// Test file locations (high signal when test fails at specific line)
+	testFileLocation = regexp.MustCompile(`/(tests?|spec|__tests__)/.*\.(cc|cpp|java|py|go|rs|js|ts):\d+`)
+
 	// === PENALTY PATTERNS (false positives) ===
 
 	// Success messages containing "error" word
@@ -284,6 +296,24 @@ func calculateConfidence(line string, severity string) float64 {
 	// Assertion failures
 	if assertionError.MatchString(line) {
 		score += 0.25
+	}
+
+	// Test framework failures (very high signal - these are definitive test failures)
+	if gtestFailure.MatchString(line) {
+		score += 0.40 // Google Test file:line:Failure is extremely high confidence
+	}
+	if gtestExpected.MatchString(line) {
+		score += 0.35 // Expected/Actual lines are assertion details
+	}
+	if junitFailure.MatchString(line) || pytestFailure.MatchString(line) ||
+		goTestFailure.MatchString(line) || rustTestFailure.MatchString(line) ||
+		jestFailure.MatchString(line) {
+		score += 0.35 // Test framework failures are definitive
+	}
+
+	// Test file locations (high signal when in a test file)
+	if testFileLocation.MatchString(line) {
+		score += 0.30 // Test file with line number is strong signal
 	}
 
 	// === PENALTIES ===
